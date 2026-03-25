@@ -1,0 +1,15 @@
+venv310/
+__pycache__/
+*.pyc
+
+# ML Models
+models/*.h5
+models/*.pkl
+
+# FAISS DB
+memory/faiss_index/
+
+# Env
+.env
+venv310/
+venv/
