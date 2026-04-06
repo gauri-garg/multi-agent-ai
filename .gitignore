@@ -13,3 +13,4 @@ memory/faiss_index/
 .env
 venv310/
 venv/
+

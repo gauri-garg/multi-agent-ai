@@ -1,39 +1,59 @@
+import pandas as pd
 import numpy as np
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense
-from sklearn.feature_extraction.text import CountVectorizer
 import pickle
 
-# dataset
-data = [
-    ("create youtube channel", 0),
-    ("start business", 1),
-    ("learn python", 2),
-    ("build ai app", 3),
-]
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.preprocessing import LabelEncoder
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout
+from tensorflow.keras.utils import to_categorical
 
-texts = [x[0] for x in data]
-labels = [x[1] for x in data]
+# Load dataset
+df = pd.read_csv("data/dataset.csv")
 
-# vectorize text
-vectorizer = CountVectorizer()
+texts = df["text"]
+labels = df["label"]
+
+# Encode labels
+encoder = LabelEncoder()
+y = encoder.fit_transform(labels)
+y = to_categorical(y)
+
+# Vectorize text (IMPROVED)
+vectorizer = TfidfVectorizer(
+    max_features=8000,
+    ngram_range=(1,2)
+)
 X = vectorizer.fit_transform(texts).toarray()
-y = np.array(labels)
 
-# DL model
-model = Sequential()
-model.add(Dense(16, input_dim=X.shape[1], activation='relu'))
-model.add(Dense(8, activation='relu'))
-model.add(Dense(4, activation='softmax'))
+# Build model (IMPROVED)
+model = Sequential([
+    Dense(256, activation='relu', input_shape=(X.shape[1],)),
+    Dropout(0.3),
+    Dense(128, activation='relu'),
+    Dropout(0.3),
+    Dense(64, activation='relu'),
+    Dense(len(set(labels)), activation='softmax')
+])
 
-model.compile(loss='sparse_categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+model.compile(
+    loss='categorical_crossentropy',
+    optimizer='adam',
+    metrics=['accuracy']
+)
 
-model.fit(X, y, epochs=50, verbose=1)
+# Train model
+model.fit(X, y, epochs=30, batch_size=8)
 
-# save model + vectorizer
+# Save model
 model.save("models/dl_model.h5")
 
+# Save vectorizer
 with open("models/dl_vectorizer.pkl", "wb") as f:
     pickle.dump(vectorizer, f)
 
-print("✅ DL model trained!")
+# Save label encoder (NEW)
+with open("models/dl_label_encoder.pkl", "wb") as f:
+    pickle.dump(encoder, f)
+
+print("✅ DL model trained and saved!")

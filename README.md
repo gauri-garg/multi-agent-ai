@@ -26,6 +26,10 @@ This project simulates how multiple intelligent agents collaborate to solve comp
 - ⚡ **FastAPI Backend**
   - High-performance API for execution
 
+  ## 🧠 Evaluator Agent
+
+The system evaluates its own output and improves responses dynamically using AI.
+
 ---
 ## 🔄 System Workflow
 

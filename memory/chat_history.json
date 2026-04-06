@@ -1,0 +1,43 @@
+[
+  {
+    "id": 1,
+    "messages": [
+      {
+        "type": "user",
+        "text": "build ai startup"
+      },
+      {
+        "type": "ai",
+        "plan": [
+          "Building an AI startup requires a strategic and well-structured approach. Here are the clear numbered steps to help guide you through the process:",
+          "1. **Define the Mission and Vision**:",
+          "* Identify the niche or problem area in AI that your startup wants to tackle.",
+          "* Define the mission and vision statements for your startup, outlining its purpose, goals, and values.",
+          "* Develop a clear understanding of your target market and the needs of your ideal customers."
+        ],
+        "ml": {
+          "category": "Technology",
+          "confidence": "Real ML Model"
+        },
+        "dl": {
+          "dl_category": "Technology",
+          "dl_confidence": "68.63%"
+        },
+        "memory": [
+          {
+            "text": "build ai startup",
+            "metadata": {
+              "type": "user_task"
+            }
+          },
+          {
+            "text": "build ai startup",
+            "metadata": {
+              "type": "user_task"
+            }
+          }
+        ]
+      }
+    ]
+  }
+]

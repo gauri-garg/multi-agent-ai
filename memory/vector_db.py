@@ -38,14 +38,21 @@ def store_memory(text, metadata=None):
         load_db()
 
     try:
-        db.add_texts(
-            [text],
-            metadatas=[metadata if metadata else {
-                "type": "general",
-                "time": str(datetime.datetime.now())
-            }]
-        )
-        db.save_local(DB_PATH)
+        # 🔍 check existing similar memory
+        existing = search_memory(text)
+    
+        if not any(text.lower() in e["text"].lower() for e in existing):
+            db.add_texts(
+                [text],
+                metadatas=[metadata if metadata else {
+                    "type": "general",
+                    "time": str(datetime.datetime.now())
+                }]
+            )
+            db.save_local(DB_PATH)
+        else:
+            print("⚠️ Duplicate skipped")
+
     except Exception as e:
         print("❌ Store Error:", e)
 

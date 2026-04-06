@@ -1,0 +1,57 @@
+episode_id,step_id,agent_type,task_domain,task_description,agent_goal,agent_thought,agent_action,action_type,tool_name,tool_input,observation,step_outcome,is_terminal,success_score
+EP001,1,planner,ai_project,Build AI chatbot,Plan system,Break into modules,Create architecture,respond,,,Modules defined,successful,False,0.4
+EP001,2,researcher,ai_project,Build AI chatbot,Find tools,Search frameworks,Search tools,tool_call,web_search,chatbot frameworks,LangChain found,successful,False,0.6
+EP001,3,executor,ai_project,Build AI chatbot,Implement API,Use FastAPI,Write API,respond,,,API built,successful,False,0.8
+EP001,4,critic,ai_project,Build AI chatbot,Validate system,Check errors,Review code,respond,,,No issues,successful,True,1.0
+
+EP002,1,planner,search,Find capital of France,Plan answer,Need lookup,Search query,tool_call,web_search,capital France,Paris found,successful,False,0.5
+EP002,2,executor,search,Find capital of France,Give answer,Respond now,Answer Paris,respond,,,Correct,successful,True,1.0
+
+EP003,1,planner,math,Solve 25*16,Plan solve,Multiply numbers,Compute,think,,,Intermediate,successful,False,0.5
+EP003,2,executor,math,Solve 25*16,Give answer,Final result,Answer 400,respond,,,Correct,successful,True,1.0
+
+EP004,1,planner,business,Start startup,Plan idea,Brainstorm,List ideas,respond,,,Ideas generated,successful,False,0.5
+EP004,2,researcher,business,Start startup,Find niche,Search trends,Search niche,tool_call,web_search,startup ideas,Results found,successful,False,0.7
+EP004,3,executor,business,Start startup,Execute plan,Build MVP,Execute,respond,,,MVP ready,successful,False,0.9
+EP004,4,critic,business,Start startup,Validate idea,Check feasibility,Review,respond,,,Approved,successful,True,1.0
+
+EP005,1,planner,learning,Learn Python,Create roadmap,Define topics,List roadmap,respond,,,Roadmap ready,successful,False,0.6
+EP005,2,executor,learning,Learn Python,Start learning,Begin basics,Execute,respond,,,Learning started,successful,True,1.0
+
+EP006,1,planner,ai_project,Build recommendation system,Design model,Choose algo,Plan CF,respond,,,Design ready,successful,False,0.5
+EP006,2,researcher,ai_project,Build recommendation system,Find dataset,Search data,Search dataset,tool_call,web_search,recommendation dataset,Dataset found,successful,False,0.7
+EP006,3,executor,ai_project,Build recommendation system,Train model,Run training,Execute,tool_call,ml_tool,train model,Model trained,successful,False,0.9
+EP006,4,critic,ai_project,Build recommendation system,Evaluate model,Check accuracy,Analyze,respond,,,Good accuracy,successful,True,1.0
+
+EP007,1,planner,search,Weather today,Plan query,Need data,Search weather,tool_call,web_search,weather today,Sunny result,successful,False,0.4
+EP007,2,executor,search,Weather today,Give answer,Respond,Sunny,respond,,,User happy,successful,True,1.0
+
+EP008,1,planner,math,Solve 81/9,Plan solve,Divide numbers,Compute,think,,,Intermediate,successful,False,0.5
+EP008,2,executor,math,Solve 81/9,Give answer,Final result,Answer 9,respond,,,Correct,successful,True,1.0
+
+EP009,1,planner,learning,Learn ML,Create roadmap,Define modules,List topics,respond,,,Modules ready,successful,False,0.6
+EP009,2,researcher,learning,Learn ML,Find resources,Search courses,Search ML course,tool_call,web_search,ML course,Resources found,successful,False,0.8
+EP009,3,executor,learning,Learn ML,Start course,Begin training,Execute,respond,,,Started,successful,True,1.0
+
+EP010,1,planner,ai_project,Build RAG system,Design pipeline,Need retrieval,Plan architecture,respond,,,Pipeline ready,successful,False,0.5
+EP010,2,researcher,ai_project,Build RAG system,Find embeddings,Search model,Search embeddings,tool_call,web_search,embedding model,MiniLM found,successful,False,0.7
+EP010,3,executor,ai_project,Build RAG system,Implement system,Code RAG,Execute,respond,,,RAG built,successful,False,0.9
+EP010,4,critic,ai_project,Build RAG system,Validate output,Check retrieval,Review,respond,,,Working,successful,True,1.0
+
+EP011,1,planner,search,CEO of Google,Plan answer,Search needed,Search CEO,tool_call,web_search,CEO Google,Sundar Pichai,successful,False,0.5
+EP011,2,executor,search,CEO of Google,Give answer,Respond,Sundar Pichai,respond,,,Correct,successful,True,1.0
+
+EP012,1,planner,business,Increase sales,Plan strategy,Need funnel,List steps,respond,,,Steps ready,successful,False,0.6
+EP012,2,executor,business,Increase sales,Execute ads,Run campaign,Execute,respond,,,Campaign live,successful,False,0.8
+EP012,3,critic,business,Increase sales,Check ROI,Analyze results,Review,respond,,,Sales improved,successful,True,1.0
+
+EP013,1,planner,math,Solve 7*8,Plan solve,Multiply,Compute,think,,,Intermediate,successful,False,0.5
+EP013,2,executor,math,Solve 7*8,Give answer,Final result,Answer 56,respond,,,Correct,successful,True,1.0
+
+EP014,1,planner,learning,Learn Java,Create roadmap,Define basics,List roadmap,respond,,,Ready,successful,False,0.6
+EP014,2,executor,learning,Learn Java,Start learning,Begin coding,Execute,respond,,,Started,successful,True,1.0
+
+EP015,1,planner,ai_project,Build voice assistant,Plan system,Need speech model,Design flow,respond,,,Flow ready,successful,False,0.5
+EP015,2,researcher,ai_project,Build voice assistant,Find API,Search tools,Search speech API,tool_call,web_search,speech API,API found,successful,False,0.7
+EP015,3,executor,ai_project,Build voice assistant,Implement code,Build system,Execute,respond,,,Built,successful,False,0.9
+EP015,4,critic,ai_project,Build voice assistant,Test system,Check output,Review,respond,,,Working,successful,True,1.0
