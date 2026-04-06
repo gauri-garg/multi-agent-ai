@@ -71,7 +71,7 @@ http://127.0.0.1:8000/execute?task=build%20ai%20startup
 
 ## 📦 Download Models
 
-Download models from:
+Download models from:g
 https://drive.google.com/drive/folders/1ZqiAbHk0LUiRd2Ym8xn0bvV0dM9jUP24?usp=sharing
 
 Place them inside:
