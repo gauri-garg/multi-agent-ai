@@ -42,8 +42,10 @@ def create_chat():
     chats = load_chats()
 
     new_chat = {
-        "id": len(chats) + 1,
-        "messages": []
+    "id": len(chats) + 1,
+    "name": f"Chat {len(chats)+1}",
+    "pinned": False,
+    "messages": []
     }
 
     chats.append(new_chat)
@@ -51,6 +53,41 @@ def create_chat():
 
     return new_chat
 
+@app.delete("/chat/{chat_id}")
+def delete_chat(chat_id: int):
+    chats = load_chats()
+
+    chats = [c for c in chats if c["id"] != chat_id]
+
+    save_chats(chats)
+
+    return {"message": "Chat deleted"}
+
+@app.put("/chat/{chat_id}")
+def rename_chat(chat_id: int, name: str):
+    chats = load_chats()
+
+    for chat in chats:
+        if chat["id"] == chat_id:
+            chat["name"] = name
+            break
+
+    save_chats(chats)
+
+    return {"message": "Chat renamed"}
+
+@app.put("/chat/{chat_id}/pin")
+def pin_chat(chat_id: int):
+    chats = load_chats()
+
+    for chat in chats:
+        if chat["id"] == chat_id:
+            chat["pinned"] = not chat.get("pinned", False)
+            break
+
+    save_chats(chats)
+
+    return {"message": "Pin toggled"}
 
 @app.post("/chat/{chat_id}")
 def add_message(chat_id: int, request: TaskRequest):
