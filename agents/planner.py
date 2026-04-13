@@ -1,15 +1,16 @@
 from agents.genai_agent import generate_response
 
-def plan_task(user_input):
+def plan_task(task):
     prompt = f"""
-    Break this task into clear numbered steps.
+    Break the following task into detailed, practical, step-by-step execution plan.
 
-    Task: {user_input}
+    Requirements:
+    - Minimum 8-12 steps
+    - Each step should be actionable
+    - Include tools, technologies, and strategy
+    - Be detailed like a professional roadmap
 
-    Output format:
-    1. Step one
-    2. Step two
-    3. Step three
+    Task: {task}
     """
 
     response = generate_response(prompt)

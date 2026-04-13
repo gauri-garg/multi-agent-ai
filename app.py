@@ -1,14 +1,19 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
 from agents.planner import plan_task
 from agents.researcher import research_step
 from agents.ml_agent import analyze_task
-from agents.dl_agent import deep_analyze, load_dl_model
 from memory.vector_db import store_memory, search_memory, load_db
-from agents.evaluator import evaluate_response
-from fastapi.middleware.cors import CORSMiddleware
 from memory.chat_store import init_store, load_chats, save_chats
-from pydantic import BaseModel
 
+# 🔥 SAFE DL IMPORT
+try:
+    from agents.dl_agent import deep_analyze, load_dl_model
+    DL_AVAILABLE = True
+except:
+    DL_AVAILABLE = False
 
 app = FastAPI()
 
@@ -19,19 +24,23 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 class TaskRequest(BaseModel):
     task: str
 
-# startup event
+# 🚀 STARTUP
 @app.on_event("startup")
-def startup_event():
+def startup():
     load_db()
-    load_dl_model()
     init_store()
+    if DL_AVAILABLE:
+        load_dl_model()
 
 @app.get("/")
 def home():
-    return {"message": "Multi-Agent AI Running 🚀"}
+    return {"message": "AI Running 🚀"}
+
+# ================= CHAT =================
 
 @app.get("/chats")
 def get_chats():
@@ -42,145 +51,117 @@ def create_chat():
     chats = load_chats()
 
     new_chat = {
-    "id": len(chats) + 1,
-    "name": f"Chat {len(chats)+1}",
-    "pinned": False,
-    "messages": []
+        "id": len(chats) + 1,
+        "name": f"Chat {len(chats)+1}",
+        "pinned": False,
+        "messages": []
     }
 
     chats.append(new_chat)
     save_chats(chats)
-
     return new_chat
 
 @app.delete("/chat/{chat_id}")
 def delete_chat(chat_id: int):
     chats = load_chats()
-
     chats = [c for c in chats if c["id"] != chat_id]
-
     save_chats(chats)
-
-    return {"message": "Chat deleted"}
-
-@app.put("/chat/{chat_id}")
-def rename_chat(chat_id: int, name: str):
-    chats = load_chats()
-
-    for chat in chats:
-        if chat["id"] == chat_id:
-            chat["name"] = name
-            break
-
-    save_chats(chats)
-
-    return {"message": "Chat renamed"}
+    return {"message": "deleted"}
 
 @app.put("/chat/{chat_id}/pin")
 def pin_chat(chat_id: int):
     chats = load_chats()
-
-    for chat in chats:
-        if chat["id"] == chat_id:
-            chat["pinned"] = not chat.get("pinned", False)
-            break
-
+    for c in chats:
+        if c["id"] == chat_id:
+            c["pinned"] = not c.get("pinned", False)
     save_chats(chats)
+    return {"message": "toggled"}
 
-    return {"message": "Pin toggled"}
+# ================= AI CORE =================
+
+def generate_ai_response(task: str):
+
+    # 1. PLAN (NO LIMIT ❗)
+    steps = plan_task(task)
+
+    if isinstance(steps, list):
+        steps_list = steps
+    else:
+        steps_list = [s.strip() for s in steps.split("\n") if s.strip()]
+
+    # 2. ML
+    ml_result = analyze_task(task)
+
+    # 3. DL (SAFE)
+    if DL_AVAILABLE:
+        dl_result = deep_analyze(task)
+    else:
+        dl_result = {
+            "dl_category": "N/A",
+            "dl_confidence": "0%"
+        }
+
+    # 4. MEMORY
+    store_memory(task, metadata={"type": "task"})
+    memory = search_memory(task)
+
+    # 5. RESEARCH
+    research_results = []
+    MAX_STEPS = 6   # 🔥 control length
+    MAX_RESEARCH = 4
+
+    steps_list = steps_list[:MAX_STEPS]
+
+    research_results = []
+    for step in steps_list[:MAX_RESEARCH]:
+        research_results.append({
+            "step": step,
+            "research": research_step(step)
+        })
+
+    # 🔥 HUMAN-LIKE RESPONSE (LONG)
+    response = f"🚀 TASK: {task}\n\n"
+
+    response += "📌 Step-by-step plan:\n"
+    for i, step in enumerate(steps_list, 1):
+        response += f"{i}. {step}\n"
+
+    response += "\n🔍 Detailed Explanation:\n"
+    for r in research_results:
+        short_research = r['research'][:300]  # limit each block
+        response += f"\n➡ {r['step']}\n{short_research}...\n"
+
+    response += f"\n🧠 ML: {ml_result['category']} ({ml_result['confidence']})"
+    response += f"\n🤖 DL: {dl_result['dl_category']} ({dl_result['dl_confidence']})"
+
+    return {
+    "type": "ai",
+    "response": response,
+    "plan": steps_list,
+    "ml": ml_result,
+    "dl": dl_result,
+    "research": research_results[:3],      # 🔥 short version
+    "full_research": research_results      # 🔥 full version
+}
+
+# ================= SEND MESSAGE =================
 
 @app.post("/chat/{chat_id}")
 def add_message(chat_id: int, request: TaskRequest):
-    task = request.task
 
     chats = load_chats()
 
     for chat in chats:
         if chat["id"] == chat_id:
 
-            # USER MESSAGE
             chat["messages"].append({
                 "type": "user",
-                "text": task
+                "text": request.task
             })
 
-            # AI PIPELINE
-            steps = plan_task(task)
-
-            ml_result = analyze_task(task)
-            dl_result = deep_analyze(task)
-
-            store_memory(task, metadata={"type": "user_task"})
-            memory = search_memory(task)
-
-            ai_msg = {
-                "type": "ai",
-                "plan": steps[:5] if isinstance(steps, list) else [steps],
-                "ml": ml_result,
-                "dl": dl_result,
-                "memory": memory
-            }
-
+            ai_msg = generate_ai_response(request.task)
             chat["messages"].append(ai_msg)
             break
 
     save_chats(chats)
-
     return ai_msg
-
-@app.get("/execute")
-def execute_task(task: str):
-
-    # 1. Planning
-    steps = plan_task(task)
-
-    # handle both string and list
-    if isinstance(steps, list):
-        steps_list = steps
-        
-    else:
-        steps_list = [s.strip() for s in steps.split("\n") if s.strip()]
-        # clean + limit steps
-       
-    steps_list = [s for s in steps_list if len(s) > 10]
-    steps_list = steps_list[:5]
-
-    # 2. ML + DL Analysis
-    ml_result = analyze_task(task)
-    dl_result = deep_analyze(task)
-    if float(dl_result["dl_confidence"].replace("%","")) > 60:
-        final_category = ml_result["category"]
-    else:
-        final_category = dl_result["dl_category"]
-   
-
-    # 3. Memory Store + Retrieve
-    store_memory(task, metadata={"type": "user_task"})
-    memory = search_memory(task)
-
-    # 4. Research per step
-    research_results = []
-    for step in steps_list:
-        result = research_step(step)
-        research_results.append({
-            "step": step,
-            "research": result
-        })
-    #5 evaluation
-    evaluation = evaluate_response(task, steps_list, ml_result, dl_result)
-
-    # Summarize findings
-    summary = f"This task is related to {ml_result['category']} and analyzed using multi-agent AI."
-
-    # Final response
-    return {
-        "task": task,
-        "summary": summary,
-        "plan": steps_list,
-        "ml_analysis": ml_result,
-        "dl_analysis": dl_result,
-        "final_decision": final_category,
-        "memory": memory,
-        "research": research_results,
-        "evaluation": evaluation
-    }

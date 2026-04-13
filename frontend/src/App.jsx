@@ -3,6 +3,7 @@ import axios from "axios";
 import { motion } from "framer-motion";
 
 export default function App() {
+  const [expandedMsgs, setExpandedMsgs] = useState({});
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -10,288 +11,146 @@ export default function App() {
   const [activeChat, setActiveChat] = useState(null);
 
   const [search, setSearch] = useState("");
-  const [editingId, setEditingId] = useState(null);
-  const [editText, setEditText] = useState("");
-
   const chatEndRef = useRef(null);
 
-  // 🔥 LOAD CHATS
+  const toggleExpand = (index) => {
+  setExpandedMsgs(prev => ({
+    ...prev,
+    [index]: !prev[index]
+  }));
+};
+
+  // LOAD CHATS
   useEffect(() => {
     axios.get("http://127.0.0.1:8000/chats")
       .then(res => {
-        const data = res.data.map(c => ({
-          ...c,
-          pinned: c.pinned || false
-        }));
-
-        setChats(data);
-
-        if (data.length > 0) {
-          setActiveChat(data[0].id);
+        setChats(res.data || []);
+        if (res.data.length > 0) {
+          setActiveChat(res.data[0].id);
         }
       })
-      .catch(err => console.error(err));
+      .catch(console.error);
   }, []);
 
-  // 🔥 AUTO SCROLL
+  // AUTO SCROLL
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chats]);
 
   const currentChat = chats.find(c => c.id === activeChat);
 
-  // 🧠 FILTER + SORT
-  const filteredChats = chats
-    .filter(chat =>
-      (chat.name || `Chat ${chat.id}`)
-        .toLowerCase()
-        .includes(search.toLowerCase())
-    )
-    .sort((a, b) => {
-      if (a.pinned && !b.pinned) return -1;
-      if (!a.pinned && b.pinned) return 1;
-      return b.id - a.id;
-    });
+  // FILTER
+  const filteredChats = chats.filter(chat =>
+    (chat.name || `Chat ${chat.id}`)
+      .toLowerCase()
+      .includes(search.toLowerCase())
+  );
 
-  // ➕ CREATE CHAT
+  // CREATE CHAT
   const createNewChat = async () => {
-    try {
-      const res = await axios.post("http://127.0.0.1:8000/chat");
-
-      const newChat = { ...res.data, pinned: false };
-
-      setChats(prev => [newChat, ...prev]);
-      setActiveChat(newChat.id);
-    } catch (err) {
-      console.error(err);
-    }
+    const res = await axios.post("http://127.0.0.1:8000/chat");
+    setChats(prev => [res.data, ...prev]);
+    setActiveChat(res.data.id);
   };
 
-  // 🗑️ DELETE
+  // DELETE CHAT
   const deleteChat = async (id) => {
-    try {
-      await axios.delete(`http://127.0.0.1:8000/chat/${id}`);
-
-      const updated = chats.filter(c => c.id !== id);
-      setChats(updated);
-
-      if (activeChat === id && updated.length > 0) {
-        setActiveChat(updated[0].id);
-      }
-    } catch (err) {
-      console.error(err);
-    }
+    await axios.delete(`http://127.0.0.1:8000/chat/${id}`);
+    setChats(prev => prev.filter(c => c.id !== id));
   };
 
-  // ✏️ RENAME
-  const startRename = (chat) => {
-    setEditingId(chat.id);
-    setEditText(chat.name || `Chat ${chat.id}`);
-  };
-
-  const saveRename = async (id) => {
-    try {
-      await axios.put(
-        `http://127.0.0.1:8000/chat/${id}?name=${editText}`
-      );
-
-      setChats(prev =>
-        prev.map(c =>
-          c.id === id ? { ...c, name: editText } : c
-        )
-      );
-
-      setEditingId(null);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  // 📌 PIN
+  // PIN CHAT
   const togglePin = async (id) => {
-    try {
-      await axios.put(`http://127.0.0.1:8000/chat/${id}/pin`);
-
-      setChats(prev =>
-        prev.map(c =>
-          c.id === id
-            ? { ...c, pinned: !c.pinned }
-            : c
-        )
-      );
-    } catch (err) {
-      console.error(err);
-    }
+    await axios.put(`http://127.0.0.1:8000/chat/${id}/pin`);
+    setChats(prev =>
+      prev.map(c =>
+        c.id === id ? { ...c, pinned: !c.pinned } : c
+      )
+    );
   };
 
-  // 🚀 SEND MESSAGE
+  // 🚀 SEND MESSAGE (FIXED)
   const sendTask = async () => {
-    if (!input || !activeChat) return;
+  if (!input || !activeChat) return;
 
-    const userMsg = { type: "user", text: input };
+  const userMsg = {
+    type: "user",
+    text: input
+  };
 
-    const aiMsg = {
-      type: "ai",
-      plan: [],
-      ml: null,
-      dl: null,
-      memory: []
-    };
+  setLoading(true);
 
-    // add user + ai placeholder
+  // ✅ 1. ADD USER MESSAGE FIRST
+  setChats(prev =>
+    prev.map(chat =>
+      chat.id === activeChat
+        ? {
+            ...chat,
+            messages: [...(chat.messages || []), userMsg]
+          }
+        : chat
+    )
+  );
+
+  try {
+    // ✅ 2. CALL BACKEND
+    const res = await axios.post(
+      `http://127.0.0.1:8000/chat/${activeChat}`,
+      { task: input }
+    );
+
+    const aiMsg = res.data;
+
+    // ✅ 3. ADD AI RESPONSE
     setChats(prev =>
       prev.map(chat =>
         chat.id === activeChat
           ? {
               ...chat,
-              messages: [...chat.messages, userMsg, aiMsg]
+              messages: [...(chat.messages || []), aiMsg]
             }
           : chat
       )
     );
 
-    setLoading(true);
+  } catch (err) {
+    console.error(err);
+  }
 
-    try {
-      const res = await axios.post(
-        `http://127.0.0.1:8000/chat/${activeChat}`,
-        { task: input }
-      );
-
-      const data = res.data;
-
-      // STREAM PLAN
-      for (let step of data.plan || []) {
-        await new Promise(r => setTimeout(r, 400));
-
-        aiMsg.plan.push(step);
-
-        setChats(prev =>
-          prev.map(chat =>
-            chat.id === activeChat
-              ? {
-                  ...chat,
-                  messages: [
-                    ...chat.messages.slice(0, -1),
-                    { ...aiMsg }
-                  ]
-                }
-              : chat
-          )
-        );
-      }
-
-      // ML
-      await new Promise(r => setTimeout(r, 300));
-      aiMsg.ml = data.ml;
-
-      setChats(prev =>
-        prev.map(chat =>
-          chat.id === activeChat
-            ? {
-                ...chat,
-                messages: [
-                  ...chat.messages.slice(0, -1),
-                  { ...aiMsg }
-                ]
-              }
-            : chat
-        )
-      );
-
-      // DL
-      await new Promise(r => setTimeout(r, 300));
-      aiMsg.dl = data.dl;
-
-      setChats(prev =>
-        prev.map(chat =>
-          chat.id === activeChat
-            ? {
-                ...chat,
-                messages: [
-                  ...chat.messages.slice(0, -1),
-                  { ...aiMsg }
-                ]
-              }
-            : chat
-        )
-      );
-
-    } catch (err) {
-      console.error(err);
-    }
-
-    setInput("");
-    setLoading(false);
-  };
+  setInput("");
+  setLoading(false);
+};
 
   return (
     <div className="flex h-screen bg-[#0f172a] text-white">
 
       {/* SIDEBAR */}
-      <div className="w-72 bg-[#0b0f19] border-r border-gray-800 flex flex-col">
+      <div className="w-64 bg-black p-4 flex flex-col">
 
-        {/* HEADER */}
-        <div className="p-4 border-b border-gray-800 space-y-3">
+        <button
+          onClick={createNewChat}
+          className="mb-3 bg-blue-600 p-2 rounded"
+        >
+          + New Chat
+        </button>
 
-          <div className="flex justify-between items-center">
-            <h2 className="text-sm text-gray-300 font-semibold">
-              💬 Chats
-            </h2>
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search..."
+          className="mb-3 p-2 bg-gray-800 rounded"
+        />
 
-            <button
-              onClick={createNewChat}
-              className="bg-blue-600 px-3 py-1 text-sm rounded-lg hover:bg-blue-700"
-            >
-              + New
-            </button>
-          </div>
-
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search chats..."
-            className="w-full p-2 text-sm rounded-lg bg-gray-900 border border-gray-700"
-          />
-        </div>
-
-        {/* LIST */}
-        <div className="flex-1 overflow-y-auto p-2 space-y-1">
-
+        <div className="flex-1 overflow-y-auto">
           {filteredChats.map(chat => (
             <div
               key={chat.id}
-              className={`group flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer ${
-                activeChat === chat.id
-                  ? "bg-blue-600/20 border border-blue-500"
-                  : "hover:bg-gray-800"
-              }`}
               onClick={() => setActiveChat(chat.id)}
+              className="p-2 hover:bg-gray-800 cursor-pointer flex justify-between"
             >
+              <span>{chat.name || `Chat ${chat.id}`}</span>
 
-              <div className="flex items-center gap-2 truncate">
-                {chat.pinned && <span>📌</span>}
-
-                {editingId === chat.id ? (
-                  <input
-                    value={editText}
-                    onChange={(e) => setEditText(e.target.value)}
-                    onBlur={() => saveRename(chat.id)}
-                    onKeyDown={(e) =>
-                      e.key === "Enter" && saveRename(chat.id)
-                    }
-                    className="bg-gray-900 text-sm px-2 py-1 rounded w-full"
-                    autoFocus
-                  />
-                ) : (
-                  <span className="text-sm truncate">
-                    {chat.name || `Chat ${chat.id}`}
-                  </span>
-                )}
-              </div>
-
-              <div className="hidden group-hover:flex gap-2 text-xs">
-
+              <div className="flex gap-2">
                 <button onClick={(e) => {
                   e.stopPropagation();
                   togglePin(chat.id);
@@ -299,14 +158,8 @@ export default function App() {
 
                 <button onClick={(e) => {
                   e.stopPropagation();
-                  startRename(chat);
-                }}>✏️</button>
-
-                <button onClick={(e) => {
-                  e.stopPropagation();
                   deleteChat(chat.id);
                 }}>🗑️</button>
-
               </div>
             </div>
           ))}
@@ -325,54 +178,100 @@ export default function App() {
           {currentChat?.messages?.map((msg, i) => (
             <div key={i}>
 
+              {/* USER */}
               {msg.type === "user" && (
                 <div className="flex justify-end">
-                  <div className="bg-blue-600 px-4 py-2 rounded-xl max-w-lg">
+                  <div className="bg-blue-600 px-4 py-2 rounded">
                     {msg.text}
                   </div>
                 </div>
               )}
 
+              {/* AI */}
               {msg.type === "ai" && (
-               <motion.div initial={{ opacity: 0 }} 
-               animate={{ opacity: 1 }} className="flex justify-start" >
-                 <div className="bg-gray-800 p-4 rounded-xl max-w-2xl space-y-3"> 
-                  {/* PLAN */}
-                 {msg.plan.length > 0 && ( 
-                  <ul className="text-sm list-disc pl-5"> 
-                  {msg.plan.map((p, i) => ( 
-                  <motion.li key={i} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.2 }} > {p} </motion.li> ))}
-                 </ul>
-                 )} 
-                 
-                 {/* ANALYSIS */} 
-                {(msg.ml || msg.dl) && ( <div className="bg-gray-900 p-3 rounded-lg"> 
-                <h3 className="text-xs text-gray-400 mb-1"> Analysis </h3> 
-                {msg.ml && ( <p className="text-sm"> 🧠 {msg.ml.category} ({msg.ml.confidence}) </p> )}
-               {msg.dl && ( <p className="text-sm"> 🤖 {msg.dl.dl_category} ({msg.dl.dl_confidence}) </p> )} 
-               </div> )} 
-               </div>
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="flex justify-start"
+                >
+                  <div className="bg-gray-800 p-4 rounded-xl max-w-4xl max-h-[500px] overflow-y-auto">
+
+                    {/* MAIN RESPONSE */}
+                    {msg.response && (
+                      <div className="text-sm whitespace-pre-wrap leading-relaxed">
+                        {msg.response}
+                      </div>
+                    )}
+
+                    {/* 🔥 RESEARCH SECTION */}
+                  {(msg.research || msg.full_research) && (
+                    <div className="bg-gray-900 p-3 rounded-lg mt-3 space-y-2">
+
+                      <h3 className="text-xs text-gray-400">🔍 Research</h3>
+
+                      {(expandedMsgs[i] ? msg.full_research : msg.research)?.map((r, idx) => (
+                        <div key={idx} className="text-xs text-gray-300">
+
+                          {/* STEP TITLE */}
+                          <div className="font-semibold">
+                            • {r.step}
+                          </div>
+
+                          {/* 🔥 SHOW DETAILS ONLY WHEN EXPANDED */}
+                          {expandedMsgs[i] && (
+                            <div className="text-gray-400 mt-1">
+                              {r.research?.slice(0, 250)}...
+                            </div>
+                          )}
+
+                        </div>
+                      ))}
+
+                      {/* BUTTON */}
+                      {msg.full_research?.length > 3 && (
+                        <button
+                          onClick={() => toggleExpand(i)}
+                          className="text-blue-400 text-xs hover:underline"
+                        >
+                          {expandedMsgs[i] ? "Show Less ▲" : "Show More ▼"}
+                        </button>
+                      )}
+
+                    </div>
+                  )}
+
+                    {/* FALLBACK */}
+                    {!msg.response && msg.plan?.length > 0 && (
+                      <ul className="text-sm list-disc pl-5">
+                        {msg.plan.map((p, i) => (
+                          <li key={i}>{p}</li>
+                        ))}
+                      </ul>
+                    )}
+
+                  </div>
                 </motion.div>
               )}
 
             </div>
           ))}
 
-          {/* TYPING */}
-          {loading && <p className="text-gray-400">AI is typing...</p>}
-
+          {loading && <p className="text-gray-400">🤖 Thinking...</p>}
           <div ref={chatEndRef} />
         </div>
 
-        <div className="p-4 border-t border-gray-800 flex gap-3">
+        <div className="p-4 flex gap-2 border-t border-gray-800">
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && sendTask()}
-            placeholder="Type your task..."
-            className="flex-1 p-3 bg-gray-900 rounded-xl"
+            className="flex-1 p-2 bg-gray-900 rounded"
+            placeholder="Ask anything..."
           />
-          <button onClick={sendTask} className="bg-blue-600 px-5 rounded-xl">
+          <button
+            onClick={sendTask}
+            className="bg-blue-600 px-4 rounded"
+          >
             Send
           </button>
         </div>
