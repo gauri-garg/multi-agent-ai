@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, Form, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from PIL import Image
@@ -83,9 +83,20 @@ def pin_chat(chat_id: int):
     save_chats(chats)
     return {"message": "toggled"}
 
+# ================= RENAME CHAT =================
+@app.put("/chat/{chat_id}/rename")
+def rename_chat(chat_id: int, name: str = Form(...)):
+    chats = load_chats()
+    for c in chats:
+        if c["id"] == chat_id:
+            c["name"] = name
+            break
+    save_chats(chats)
+    return {"message": "renamed", "name": name}
+
 # ================= TEXT MESSAGE =================
 @app.post("/chat/{chat_id}")
-def add_message(chat_id: int, request: TaskRequest):
+def add_message(chat_id: int, task: str = Form(...), mode: str = Form(...)):
 
     chats = load_chats()
 
@@ -96,12 +107,12 @@ def add_message(chat_id: int, request: TaskRequest):
 
             chat["messages"].append({
                 "type": "user",
-                "text": request.task
+                "text": task
             })
 
             ai_msg = generate_ai_response(
-                request.task,
-                request.mode,
+                task,
+                mode,
                 context=context,
                 messages=chat["messages"]
             )
@@ -121,6 +132,22 @@ async def upload_image(chat_id: int, file: UploadFile = File(...)):
 
     extracted_text = pytesseract.image_to_string(image)
 
+    # 🖼️ Generate a lightweight thumbnail for persistent chat preview
+    try:
+        preview_img = image.copy()
+        preview_img.thumbnail((500, 500))
+        if preview_img.mode in ("RGBA", "P"):
+            preview_img = preview_img.convert("RGB")
+        
+        buffered = io.BytesIO()
+        preview_img.save(buffered, format="JPEG")
+        
+        import base64
+        base64_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+        img_data_url = f"data:image/jpeg;base64,{base64_str}"
+    except Exception as e:
+        img_data_url = None
+
     chats = load_chats()
 
     for chat in chats:
@@ -128,10 +155,14 @@ async def upload_image(chat_id: int, file: UploadFile = File(...)):
 
             context = build_smart_context(chat["messages"])
 
-            chat["messages"].append({
+            user_message = {
                 "type": "user",
                 "text": "[Image Uploaded 📷]"
-            })
+            }
+            if img_data_url:
+                user_message["imageUrl"] = img_data_url
+            
+            chat["messages"].append(user_message)
 
             ai_msg = generate_ai_response(
                 extracted_text,
