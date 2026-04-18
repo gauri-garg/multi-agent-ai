@@ -181,19 +181,19 @@ useEffect(() => {
     deleteChat(id);
   };
 
-  // ================= IMAGE UPLOAD =================
-  const uploadImage = async (file) => {
+  // ================= FILE UPLOAD =================
+  const uploadFile = async (file) => {
     if (!file || !activeChat) return;
 
     const formData = new FormData();
     formData.append("file", file);
 
-    const previewUrl = URL.createObjectURL(file);
+    const previewUrl = file.type.startsWith("image/") ? URL.createObjectURL(file) : null;
 
     const userMsg = {
       id: Date.now() + Math.random(),
       type: "user",
-      text: "[Image Uploaded 📷]",
+      text: `[File Uploaded: ${file.name} 📎]`,
       imageUrl: previewUrl
     };
 
@@ -241,8 +241,8 @@ const sendTask = async () => {
 
   try {
      if (file && !currentInput.trim()) {
-      if (isFirstMsg) renameChat(activeChat, "Image Upload 📷");
-    await uploadImage(file);
+      if (isFirstMsg) renameChat(activeChat, `Upload: ${file.name}`);
+    await uploadFile(file);
     setFile(null);
     setFilePreview(null);
     setLoading(false);
@@ -499,7 +499,11 @@ const sendTask = async () => {
                 {file && (
                   <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} className="relative w-fit mb-1">
                     <div className="relative rounded-xl overflow-hidden border border-slate-600 shadow-sm bg-slate-800">
-                      {filePreview && <img src={filePreview} alt="Preview" className="h-20 md:h-24 w-auto object-cover" />}
+                      {filePreview ? (
+                        <img src={filePreview} alt="Preview" className="h-20 md:h-24 w-auto object-cover" />
+                      ) : (
+                        <div className="h-20 w-24 flex items-center justify-center bg-slate-700 text-3xl">📄</div>
+                      )}
                       <button onClick={() => { setFile(null); setFilePreview(null); }} className="absolute top-1 right-1 bg-slate-900/80 hover:bg-red-500 text-white rounded-full h-6 w-6 flex items-center justify-center text-xs transition-colors backdrop-blur-sm shadow-md">
                         ✖
                       </button>
@@ -517,12 +521,15 @@ const sendTask = async () => {
                     <input
                       type="file"
                       hidden
-                      accept="image/*"
                       onChange={(e) => { 
                         const f = e.target.files[0]; 
                         if (f) {
                           setFile(f); 
-                          setFilePreview(URL.createObjectURL(f));
+                          if (f.type.startsWith("image/")) {
+                            setFilePreview(URL.createObjectURL(f));
+                          } else {
+                            setFilePreview(null);
+                          }
                         }
                         e.target.value = null; 
                       }}

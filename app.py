@@ -123,30 +123,68 @@ def add_message(chat_id: int, task: str = Form(...), mode: str = Form(...)):
     save_chats(chats)
     return ai_msg
 
-# ================= IMAGE UPLOAD =================
+# ================= FILE UPLOAD =================
 @app.post("/upload/{chat_id}")
-async def upload_image(chat_id: int, file: UploadFile = File(...)):
+async def upload_file(chat_id: int, file: UploadFile = File(...)):
 
     contents = await file.read()
-    image = Image.open(io.BytesIO(contents))
+    filename = file.filename.lower()
+    extracted_text = ""
+    img_data_url = None
 
-    extracted_text = pytesseract.image_to_string(image)
+    if filename.endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif")):
+        image = Image.open(io.BytesIO(contents))
+        extracted_text = pytesseract.image_to_string(image)
 
-    # 🖼️ Generate a lightweight thumbnail for persistent chat preview
-    try:
-        preview_img = image.copy()
-        preview_img.thumbnail((500, 500))
-        if preview_img.mode in ("RGBA", "P"):
-            preview_img = preview_img.convert("RGB")
-        
-        buffered = io.BytesIO()
-        preview_img.save(buffered, format="JPEG")
-        
-        import base64
-        base64_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
-        img_data_url = f"data:image/jpeg;base64,{base64_str}"
-    except Exception as e:
-        img_data_url = None
+        # 🖼️ Generate a lightweight thumbnail for persistent chat preview
+        try:
+            preview_img = image.copy()
+            preview_img.thumbnail((500, 500))
+            if preview_img.mode in ("RGBA", "P"):
+                preview_img = preview_img.convert("RGB")
+            
+            buffered = io.BytesIO()
+            preview_img.save(buffered, format="JPEG")
+            
+            import base64
+            base64_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+            img_data_url = f"data:image/jpeg;base64,{base64_str}"
+        except Exception as e:
+            img_data_url = None
+            
+    elif filename.endswith(".pdf"):
+        try:
+            import PyPDF2
+            pdf_reader = PyPDF2.PdfReader(io.BytesIO(contents))
+            for page in pdf_reader.pages:
+                text = page.extract_text()
+                if text: extracted_text += text + "\n"
+        except ImportError:
+            extracted_text = "[Error: PyPDF2 is not installed. Run `pip install PyPDF2`]"
+        except Exception as e:
+            extracted_text = f"[PDF Extraction Error: {e}]"
+            
+    elif filename.endswith(".pptx"):
+        try:
+            from pptx import Presentation
+            prs = Presentation(io.BytesIO(contents))
+            for slide in prs.slides:
+                for shape in slide.shapes:
+                    if hasattr(shape, "text"):
+                        extracted_text += shape.text + "\n"
+        except ImportError:
+            extracted_text = "[Error: python-pptx is not installed. Run `pip install python-pptx`]"
+        except Exception as e:
+            extracted_text = f"[PPTX Extraction Error: {e}]"
+            
+    else:
+        try:
+            extracted_text = contents.decode("utf-8")
+        except:
+            extracted_text = f"[Uploaded file: {file.filename}, but content could not be read as text.]"
+            
+    if not extracted_text.strip():
+        extracted_text = f"[Uploaded file: {file.filename}, but no text was found.]"
 
     chats = load_chats()
 
@@ -157,7 +195,7 @@ async def upload_image(chat_id: int, file: UploadFile = File(...)):
 
             user_message = {
                 "type": "user",
-                "text": "[Image Uploaded 📷]"
+                "text": f"[File Uploaded: {file.filename} 📎]"
             }
             if img_data_url:
                 user_message["imageUrl"] = img_data_url
