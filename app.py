@@ -1,19 +1,23 @@
-from fastapi import FastAPI, Form, UploadFile, File
+from fastapi import FastAPI, Form, UploadFile, File, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from PIL import Image
 import pytesseract
 import io
-import asyncio
+import uuid
 import json
+import asyncio
 import re
+from sqlalchemy.orm import Session
+from dotenv import load_dotenv
 
 from agents.planner import plan_task
 from agents.researcher import research_step
 from agents.ml_agent import analyze_task
 from memory.vector_db import store_memory, search_memory, load_db
-from memory.chat_store import init_store, load_chats, save_chats
+from database import engine, Base, User, Chat, Message, SharedChat, SessionLocal
+from auth import get_db, get_password_hash, verify_password, create_access_token, get_current_user, timedelta, ACCESS_TOKEN_EXPIRE_MINUTES
 
 # 🔥 SAFE DL IMPORT
 try:
@@ -21,6 +25,9 @@ try:
     DL_AVAILABLE = True
 except:
     DL_AVAILABLE = False
+
+# Create DB Tables
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 
@@ -34,11 +41,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+class UserCreate(BaseModel):
+    name: str
+    email: str
+    password: str
+
+class UserLogin(BaseModel):
+    email: str
+    password: str
+
 # ================= STARTUP =================
 @app.on_event("startup")
 def startup():
     load_db()
-    init_store()
     if DL_AVAILABLE:
         load_dl_model()
 
@@ -46,54 +61,116 @@ def startup():
 def home():
     return {"message": "AI Running 🚀"}
 
+# ================= AUTH ROUTES =================
+@app.post("/auth/register")
+def register(user: UserCreate, db: Session = Depends(get_db)):
+    if db.query(User).filter(User.email == user.email).first():
+        raise HTTPException(status_code=400, detail="Email already registered")
+    new_user = User(name=user.name, email=user.email, password_hash=get_password_hash(user.password))
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    token = create_access_token(data={"sub": new_user.email}, expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    return {"access_token": token, "token_type": "bearer", "user": {"id": new_user.id, "name": new_user.name, "email": new_user.email}}
+
+@app.post("/auth/login")
+def login(user: UserLogin, db: Session = Depends(get_db)):
+    db_user = db.query(User).filter(User.email == user.email).first()
+    if not db_user or not verify_password(user.password, db_user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    token = create_access_token(data={"sub": db_user.email}, expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    return {"access_token": token, "token_type": "bearer", "user": {"id": db_user.id, "name": db_user.name, "email": db_user.email}}
+
+@app.get("/auth/me")
+def get_me(current_user: User = Depends(get_current_user)):
+    return {"id": current_user.id, "name": current_user.name, "email": current_user.email}
+
+@app.delete("/auth/delete-account")
+def delete_account(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    db.delete(current_user)
+    db.commit()
+    return {"message": "Account deleted successfully"}
+
+@app.get("/users")
+def get_all_users(db: Session = Depends(get_db)):
+    users = db.query(User).all()
+    return [{"id": u.id, "name": u.name, "email": u.email, "created_at": u.created_at} for u in users]
+
+# ================= SHARE ROUTES =================
+@app.post("/chat/{chat_id}/share")
+def share_chat(chat_id: int, is_public: bool = Form(...), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    chat = db.query(Chat).filter(Chat.id == chat_id, Chat.user_id == current_user.id).first()
+    if not chat: raise HTTPException(status_code=404)
+    
+    shared = db.query(SharedChat).filter(SharedChat.chat_id == chat.id).first()
+    if not shared:
+        shared = SharedChat(chat_id=chat.id, share_token=str(uuid.uuid4())[:12], is_public=is_public)
+        db.add(shared)
+    else:
+        shared.is_public = is_public
+    db.commit()
+    return {"share_token": shared.share_token, "is_public": shared.is_public}
+
+@app.get("/share/{token}")
+def get_shared_chat(token: str, db: Session = Depends(get_db)):
+    shared = db.query(SharedChat).filter(SharedChat.share_token == token, SharedChat.is_public == True).first()
+    if not shared: raise HTTPException(status_code=404, detail="Share link invalid or private")
+    
+    messages = db.query(Message).filter(Message.chat_id == shared.chat_id).order_by(Message.id).all()
+    msg_list = [{"id": m.id, "type": m.type, "text": m.text, "imageUrl": m.image_url, "response": m.response, "plan": json.loads(m.plan) if m.plan else [], "research": json.loads(m.research) if m.research else []} for m in messages]
+    return {"name": shared.chat.name, "messages": msg_list}
+
 # ================= CHAT =================
+def serialize_chat(c):
+    msgs = [{"id": m.id, "type": m.type, "text": m.text, "imageUrl": m.image_url, "response": m.response, "plan": json.loads(m.plan) if m.plan else [], "research": json.loads(m.research) if m.research else []} for m in c.messages]
+    return {"id": c.id, "name": c.name, "pinned": c.pinned, "messages": msgs}
+
 @app.get("/chats")
-def get_chats():
-    return load_chats()
+def get_chats(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    chats = db.query(Chat).filter(Chat.user_id == current_user.id).order_by(Chat.created_at.desc()).all()
+    return [serialize_chat(c) for c in chats]
 
 @app.post("/chat")
-def create_chat():
-    chats = load_chats()
-
-    new_id = max((c["id"] for c in chats), default=0) + 1
-
-    new_chat = {
-        "id": new_id,
-        "name": f"Chat {new_id}",
-        "pinned": False,
-        "messages": []
-    }
-
-    chats.append(new_chat)
-    save_chats(chats)
-    return new_chat
+def create_chat(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    new_chat = Chat(user_id=current_user.id, name="New Chat")
+    db.add(new_chat)
+    db.commit()
+    db.refresh(new_chat)
+    return serialize_chat(new_chat)
 
 @app.delete("/chat/{chat_id}")
-def delete_chat(chat_id: int):
-    chats = load_chats()
-    chats = [c for c in chats if c["id"] != chat_id]
-    save_chats(chats)
+def delete_chat(chat_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    chat = db.query(Chat).filter(Chat.id == chat_id, Chat.user_id == current_user.id).first()
+    if chat:
+        db.delete(chat)
+        db.commit()
     return {"message": "deleted"}
 
 @app.put("/chat/{chat_id}/pin")
-def pin_chat(chat_id: int):
-    chats = load_chats()
-    for c in chats:
-        if c["id"] == chat_id:
-            c["pinned"] = not c.get("pinned", False)
-    save_chats(chats)
+def pin_chat(chat_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    chat = db.query(Chat).filter(Chat.id == chat_id, Chat.user_id == current_user.id).first()
+    if chat:
+        chat.pinned = not chat.pinned
+        db.commit()
     return {"message": "toggled"}
 
 # ================= RENAME CHAT =================
 @app.put("/chat/{chat_id}/rename")
-def rename_chat(chat_id: int, name: str = Form(...)):
-    chats = load_chats()
-    for c in chats:
-        if c["id"] == chat_id:
-            c["name"] = name
-            break
-    save_chats(chats)
+def rename_chat(chat_id: int, name: str = Form(...), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    chat = db.query(Chat).filter(Chat.id == chat_id, Chat.user_id == current_user.id).first()
+    if chat:
+        chat.name = name
+        db.commit()
     return {"message": "renamed", "name": name}
+
+# ================= DELETE MESSAGE (For Regeneration) =================
+@app.delete("/chat/{chat_id}/message/{msg_id}")
+def delete_message(chat_id: int, msg_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    msg = db.query(Message).join(Chat).filter(Message.id == msg_id, Chat.user_id == current_user.id).first()
+    if msg:
+        db.delete(msg)
+        db.commit()
+    return {"message": "deleted"}
 
 # ================= TEXT MESSAGE =================
 @app.post("/chat/{chat_id}")
@@ -103,27 +180,46 @@ async def add_message(
     ai_length: str = Form("Auto"),
     ai_format: str = Form("Auto"),
     ai_tone: str = Form("Auto"),
-    ai_language: str = Form("Auto")
+    ai_language: str = Form("Auto"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
-
-    chats = load_chats()
-    chat_found = next((c for c in chats if c["id"] == chat_id), None)
-    if not chat_found:
+    chat = db.query(Chat).filter(Chat.id == chat_id, Chat.user_id == current_user.id).first()
+    if not chat:
         return {"error": "Chat not found"}
 
-    context = build_smart_context(chat_found["messages"])
-    chat_found["messages"].append({"type": "user", "text": task})
+    # Save user message
+    user_msg = Message(chat_id=chat.id, type="user", text=task)
+    db.add(user_msg)
+    db.commit()
+
+    # Build Context
+    messages_dict = [{"type": m.type, "text": m.text, "response": m.response, "plan": json.loads(m.plan) if m.plan else []} for m in chat.messages]
+    context = build_smart_context(messages_dict)
 
     async def stream_response():
-        ai_msg = await asyncio.to_thread(generate_ai_response, task, context, chat_found["messages"], ai_length, ai_format, ai_tone, ai_language)
+        ai_msg = await asyncio.to_thread(generate_ai_response, task, context, messages_dict, ai_length, ai_format, ai_tone, ai_language)
         text = str(ai_msg.get("response", ""))
         tokens = re.split(r'(\s+)', text)
         for token in tokens:
             if token:
                 yield json.dumps({"type": "chunk", "text": token}) + "\n"
                 await asyncio.sleep(0.02)  # Fast, realistic stream delay
-        chat_found["messages"].append(ai_msg)
-        save_chats(chats)
+        
+        # Save AI Response
+        ai_msg_db = Message(
+            chat_id=chat.id, type="ai", response=ai_msg.get("response"),
+            plan=json.dumps(ai_msg.get("plan", [])), research=json.dumps(ai_msg.get("full_research", []))
+        )
+        db_session = SessionLocal()
+        try:
+            db_session.add(ai_msg_db)
+            db_session.commit()
+            db_session.refresh(ai_msg_db)
+            ai_msg["id"] = ai_msg_db.id
+        finally:
+            db_session.close()
+        
         yield json.dumps({"type": "done", "full": ai_msg}) + "\n"
 
     return StreamingResponse(stream_response(), media_type="application/x-ndjson")
@@ -136,9 +232,10 @@ async def upload_file(
     ai_length: str = Form("Auto"),
     ai_format: str = Form("Auto"),
     ai_tone: str = Form("Auto"),
-    ai_language: str = Form("Auto")
+    ai_language: str = Form("Auto"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
-
     contents = await file.read()
     filename = file.filename.lower()
     extracted_text = ""
@@ -198,27 +295,37 @@ async def upload_file(
     if not extracted_text.strip():
         extracted_text = f"[Uploaded file: {file.filename}, but no text was found.]"
 
-    chats = load_chats()
-    chat_found = next((c for c in chats if c["id"] == chat_id), None)
-    if not chat_found:
+    chat = db.query(Chat).filter(Chat.id == chat_id, Chat.user_id == current_user.id).first()
+    if not chat:
         return {"error": "Chat not found"}
 
-    context = build_smart_context(chat_found["messages"])
-    user_message = {"type": "user", "text": f"[File Uploaded: {file.filename} 📎]"}
-    if img_data_url:
-        user_message["imageUrl"] = img_data_url
-    chat_found["messages"].append(user_message)
+    # Save User Upload Message
+    user_msg = Message(chat_id=chat.id, type="user", text=f"[File Uploaded: {file.filename} 📎]", image_url=img_data_url)
+    db.add(user_msg)
+    db.commit()
+
+    messages_dict = [{"type": m.type, "text": m.text, "response": m.response, "plan": json.loads(m.plan) if m.plan else []} for m in chat.messages]
+    context = build_smart_context(messages_dict)
 
     async def stream_upload_response():
-        ai_msg = await asyncio.to_thread(generate_ai_response, extracted_text, context, chat_found["messages"], ai_length, ai_format, ai_tone, ai_language)
+        ai_msg = await asyncio.to_thread(generate_ai_response, extracted_text, context, messages_dict, ai_length, ai_format, ai_tone, ai_language)
         text = str(ai_msg.get("response", ""))
         tokens = re.split(r'(\s+)', text)
         for token in tokens:
             if token:
                 yield json.dumps({"type": "chunk", "text": token}) + "\n"
                 await asyncio.sleep(0.02)
-        chat_found["messages"].append(ai_msg)
-        save_chats(chats)
+        
+        ai_msg_db = Message(chat_id=chat.id, type="ai", response=ai_msg.get("response"), plan=json.dumps(ai_msg.get("plan", [])), research=json.dumps(ai_msg.get("full_research", [])))
+        db_session = SessionLocal()
+        try:
+            db_session.add(ai_msg_db)
+            db_session.commit()
+            db_session.refresh(ai_msg_db)
+            ai_msg["id"] = ai_msg_db.id
+        finally:
+            db_session.close()
+        
         yield json.dumps({"type": "done", "full": ai_msg}) + "\n"
 
     return StreamingResponse(stream_upload_response(), media_type="application/x-ndjson")

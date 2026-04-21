@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import mermaid from "mermaid";
+import { LikeIcon, DislikeIcon, CopyIcon, CheckIcon, RegenerateIcon, LogoIcon, UserIcon } from "./icons";
 
 mermaid.initialize({
   startOnLoad: false,
@@ -13,7 +14,7 @@ mermaid.initialize({
   suppressErrorRendering: true
 });
 
-const Mermaid = ({ chart, isStreaming }) => {
+const Mermaid = ({ chart, isStreaming, theme }) => {
   const [svgContent, setSvgContent] = useState("");
   const [error, setError] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -21,6 +22,7 @@ const Mermaid = ({ chart, isStreaming }) => {
   useEffect(() => {
     let isMounted = true;
     if (chart) {
+      mermaid.initialize({ theme: theme === 'dark' ? 'dark' : 'default' });
       const id = `mermaid-${Math.random().toString(36).substring(2, 9)}`;
       mermaid.render(id, chart)
         .then(({ svg }) => {
@@ -103,8 +105,9 @@ export default function MessageBubble({ msg, isReady }) {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 15 }}
+      initial={msg.isNew ? { opacity: 0, y: 15 } : false}
       animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
       className={`flex w-full ${isUser ? "justify-end" : "justify-start"}`}
     >
       <div className={`flex gap-4 max-w-[95%] md:max-w-[85%] ${isUser ? "flex-row-reverse" : "flex-row"}`}>
@@ -165,8 +168,10 @@ export default function MessageBubble({ msg, isReady }) {
                       }
                     }}
                   >
-                    {msg.response}
+                    {msg.response + (msg.isStreaming ? ' ▍' : '')}
                   </ReactMarkdown>
+                ) : msg.isStopped ? (
+                  <span className="italic opacity-60 text-sm">Response generation was stopped by user.</span>
                 ) : (
                   <span className="animate-pulse">Thinking...</span>
                 )}
@@ -214,9 +219,9 @@ export default function MessageBubble({ msg, isReady }) {
             </div>
           )}
 
-          {/* Copy Toolbar */}
-          {(isUser || msg.response) && (
-            <div className={`flex items-center gap-2 mt-1 ${isUser ? "justify-end mr-2" : "justify-start ml-2"}`}>
+          {/* Copy Toolbar for User */}
+          {isUser && (
+            <div className="flex items-center gap-2 mt-1 justify-end mr-2">
               <button 
                 onClick={handleCopy} 
                 className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 transition-colors"
