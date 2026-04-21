@@ -139,6 +139,12 @@ export default function MessageBubble({ msg, isReady }) {
               <div className="whitespace-pre-wrap">{msg.text}</div>
             ) : (
               <div className="prose prose-invert max-w-none prose-p:leading-relaxed prose-pre:bg-slate-900/80 prose-pre:border prose-pre:border-slate-700/50 prose-pre:shadow-inner prose-headings:text-blue-400 prose-a:text-blue-400">
+                {msg.detected_format && (
+                  <div className="flex items-center gap-1.5 mb-3 text-[10px] font-bold uppercase tracking-wider text-blue-400/90 select-none">
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                    Auto-Formatted: {msg.detected_format}
+                  </div>
+                )}
                 {(isReady && msg.response) ? (
                   <ReactMarkdown 
                     remarkPlugins={[remarkGfm]}

@@ -357,6 +357,20 @@ def detect_query_type(task, context):
 
     return "new"
 
+# ================= SMART FORMAT CLASSIFIER =================
+def detect_format_type(query):
+    query_lower = query.lower()
+    if "compare" in query_lower or "difference" in query_lower:
+        return "Table"
+    elif "steps" in query_lower or "how to" in query_lower or "guide" in query_lower:
+        return "Step-by-step"
+    elif "list" in query_lower or "features" in query_lower:
+        return "Bullet Points"
+    elif "flowchart" in query_lower or "process" in query_lower or "decision" in query_lower:
+        return "Flowchart"
+    else:
+        return "Paragraph"
+
 # ================= AI CORE =================
 def generate_ai_response(task: str, context="", messages=[], ai_length="Auto", ai_format="Auto", ai_tone="Auto", ai_language="Auto"):
 
@@ -417,70 +431,66 @@ def generate_ai_response(task: str, context="", messages=[], ai_length="Auto", a
     # =============================
     # 5. STRICT PROMPT BUILDER & AI SYNTHESIS
     # =============================
-    length_mapping = {
-        "Short": "3-6 lines maximum.",
-        "Medium": "1-3 paragraphs.",
-        "Detailed": "Full comprehensive explanation with headings.",
-        "10 lines": "Exactly around 10 lines.",
-        "100 lines": "Long, highly structured answer."
-    }
+    detected_format = None
+    if ai_format == "Auto":
+        detected_format = detect_format_type(task)
+        format_instruction = f"""
+Analyze the user query and choose the BEST format:
+- Use bullet points → for lists or features
+- Use step-by-step → for guides/tutorials
+- Use table → for comparisons or structured data
+- Use flowchart → for processes or decision making
+- Otherwise → use paragraph
 
-    format_mapping = {
-        "Paragraph": "Use readable paragraphs with spacing.",
-        "Bullet Points": "Use markdown bullet points. Every point on a new line.",
-        "Numbered Steps": "Use numbered steps (1., 2., 3.).",
-        "Table": "Generate a COMPLETE markdown table. NEVER output broken tables.",
-        "Comparison": "Generate a comparison format (use a table if applicable).",
-        "Report": "Use Report format: Title, Introduction, Analysis, Conclusion.",
-        "Flowchart Text": "Output text formatted like a flowchart (e.g., Step A -> Step B).",
-        "Markdown": "Use rich markdown formatting."
-    }
-
-    auto_mode_rules = """
-<SMART_DETECTION>
-User settings are 'Auto'. Act like an elite AI:
-- Greeting → short natural reply
-- Report request → headings format
-- Compare request → table
-- Explain topic → medium clean answer
-- Code request → code block
-- Steps request → numbered list
-- Summary request → concise bullets
-- Chart/Graph/Flowchart request → Use Mermaid.js (```mermaid) syntax to draw the chart. Do NOT put titles or explanations inside the mermaid block.
-</SMART_DETECTION>
+Smart Detection Suggestion: {detected_format}
 """
-
-    is_custom = ai_length != "Auto" or ai_format != "Auto" or ai_tone != "Auto" or ai_language != "Auto"
+    else:
+        format_instruction = f"Respond strictly in {ai_format} format."
 
     system_instruction = f"""
 You are an elite, highly capable AI assistant (like ChatGPT / Gemini). Your intelligence is vast.
 
-<USER_PREFERENCES>
-Length: {length_mapping.get(ai_length, ai_length)}
-Format: {format_mapping.get(ai_format, ai_format)}
-Tone: {ai_tone}
-Language: {ai_language}
-</USER_PREFERENCES>
+User Preferences:
+- Tone: {ai_tone}
+- Mode: {ai_length}
+- Format: {ai_format}
+- Language: {ai_language}
 
-<STRICT_RULES>
-1. PRIORITY ORDER: Format > Length > Tone > Language.
-2. STRICT COMPLIANCE: You MUST strictly follow the selected settings above. If Format is 'Table', output a table.
-3. BAD OUTPUT PREVENTION: 
+Rules:
+{format_instruction}
+
+Tone Rules:
+- Professional → formal and precise
+- Casual → friendly and simple
+- Technical → detailed and domain-specific
+- Friendly → warm and easy to read
+- Auto → adopt a natural, conversational tone
+
+Mode Rules:
+- Summary → short and concise
+- Detailed → deep explanation
+- Auto → decide based on query complexity
+
+Formatting Rules:
+- Bullet Points → use • or -
+- Step-by-step → numbered steps (1, 2, 3)
+- Table → markdown table
+- Flowchart → Generate a valid Mermaid.js code block (```mermaid ... ```). Nodes MUST use simple alphanumeric IDs without spaces.
+- Paragraph → readable paragraphs with spacing
+
+CRITICAL:
+- If user selected a format (not Auto) → DO NOT change it.
+- If format is Auto → choose the best format intelligently.
+- Response must be clean, readable, and structured.
+- Answer directly using the Knowledge Base. Remove robotic filler text.
    - NEVER generate repeated headings or duplicated paragraphs.
    - NEVER repeat the exact same sentence twice.
-   - NEVER output random task execution plans, internal research steps, or irrelevant planning steps. Synthesize the knowledge instead.
-   - Remove all robotic filler text. Answer directly and naturally.
-4. ACCURACY: Answer the user's prompt directly using the Knowledge Base.
-5. VISUALIZATIONS: If the user explicitly asks for a flowchart, chart, graph, or timeline, YOU MUST generate a valid Mermaid.js code block. Nodes MUST use simple alphanumeric IDs without spaces (e.g., A, B, C). Node labels MUST be enclosed in brackets (e.g., A[Patient Arrival] -->|Label| B[Next Step]). DO NOT output a markdown table or text list when a flowchart is requested. NEVER use spaces in node IDs. NEVER add a `>` after the text label like `-->|text|>node`. NEVER include titles, explanations, or normal text inside the ```mermaid block.
-6. {auto_mode_rules if not is_custom else "Enforce the user preferences strictly. However, if the user prompt explicitly asks for a flowchart, Mermaid visualization overrides Format preference."}
-</STRICT_RULES>
 
-<KNOWLEDGE_BASE>
+Knowledge Base:
 {research_text}
-</KNOWLEDGE_BASE>
 
-Respond to: {task}
-Answer ONLY with the final response. Use professional formatting. No repetition.
+User Query:
+{task}
 """
 
     # Send the combined data back to the LLM to generate the TRUE final response
@@ -515,5 +525,6 @@ Answer ONLY with the final response. Use professional formatting. No repetition.
         "plan": steps_list,
         "research": research_results[:2],
         "full_research": research_results,
-        "memory": memory
+        "memory": memory,
+        "detected_format": detected_format if ai_format == "Auto" else None
     }
