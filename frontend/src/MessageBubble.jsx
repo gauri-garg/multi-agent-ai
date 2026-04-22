@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import mermaid from "mermaid";
-import { LikeIcon, DislikeIcon, CopyIcon, CheckIcon, RegenerateIcon, LogoIcon, UserIcon } from "./icons";
+import { LikeIcon, DislikeIcon, CopyIcon } from "./icons";
 
 mermaid.initialize({
   startOnLoad: false,
@@ -14,10 +14,45 @@ mermaid.initialize({
   suppressErrorRendering: true
 });
 
-const Mermaid = ({ chart, isStreaming, theme }) => {
+const Mermaid = ({ chart, isStreaming, theme, showToast }) => {
   const [svgContent, setSvgContent] = useState("");
   const [error, setError] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const svgContainerRef = useRef(null);
+
+  const handleCopyCode = (e) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(chart);
+    if (showToast) showToast("Mermaid code copied!");
+  };
+
+  const handleDownloadPNG = (e) => {
+    e.stopPropagation();
+    const svg = svgContainerRef.current?.querySelector("svg");
+    if (!svg) return;
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    const data = new XMLSerializer().serializeToString(svg);
+    const DOMURL = window.URL || window.webkitURL || window;
+    const img = new Image();
+    const svgBlob = new Blob([data], { type: "image/svg+xml;charset=utf-8" });
+    const url = DOMURL.createObjectURL(svgBlob);
+    img.onload = () => {
+      canvas.width = img.width * 2;
+      canvas.height = img.height * 2;
+      ctx.fillStyle = theme === "dark" ? "#0f172a" : "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.scale(2, 2);
+      ctx.drawImage(img, 0, 0);
+      DOMURL.revokeObjectURL(url);
+      const a = document.createElement("a");
+      a.download = "flowchart.png";
+      a.href = canvas.toDataURL("image/png");
+      a.click();
+      if (showToast) showToast("Flowchart downloaded!");
+    };
+    img.src = url;
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -55,10 +90,18 @@ const Mermaid = ({ chart, isStreaming, theme }) => {
       <div className={`group relative flex justify-center w-full my-6 overflow-x-auto bg-slate-900/60 p-6 rounded-2xl shadow-inner border border-slate-700/50 ${!svgContent ? 'min-h-[100px] items-center' : ''}`}>
         {svgContent ? (
           <>
-            <button onClick={() => setIsFullscreen(true)} className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 bg-slate-800 text-slate-300 hover:text-white p-2 rounded-lg transition-opacity border border-slate-700 shadow-sm z-10" title="View Fullscreen">
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
-            </button>
-            <div dangerouslySetInnerHTML={{ __html: svgContent }} className="w-full flex justify-center cursor-zoom-in [&>svg]:max-w-full [&>svg]:h-auto" onClick={() => setIsFullscreen(true)} />
+            <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 flex gap-2 z-10 transition-opacity">
+              <button onClick={handleCopyCode} className="bg-slate-800 text-slate-300 hover:text-white p-2 rounded-lg border border-slate-700 shadow-sm" title="Copy Mermaid Code">
+                <CopyIcon className="w-4 h-4" />
+              </button>
+              <button onClick={handleDownloadPNG} className="bg-slate-800 text-slate-300 hover:text-white p-2 rounded-lg border border-slate-700 shadow-sm" title="Download as PNG">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+              </button>
+              <button onClick={() => setIsFullscreen(true)} className="bg-slate-800 text-slate-300 hover:text-white p-2 rounded-lg border border-slate-700 shadow-sm" title="View Fullscreen">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l5-5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+              </button>
+            </div>
+            <div ref={svgContainerRef} dangerouslySetInnerHTML={{ __html: svgContent }} className="w-full flex justify-center cursor-zoom-in [&>svg]:max-w-full [&>svg]:h-auto" onClick={() => setIsFullscreen(true)} />
           </>
         ) : (
           <>
@@ -68,28 +111,66 @@ const Mermaid = ({ chart, isStreaming, theme }) => {
         )}
       </div>
 
-      <AnimatePresence>
-        {isFullscreen && createPortal(
-          <motion.div
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/90 backdrop-blur-md p-4 sm:p-8 cursor-zoom-out"
-            onClick={() => setIsFullscreen(false)}
-          >
-            <div className="relative bg-slate-900 rounded-3xl p-6 sm:p-10 w-full h-full max-w-7xl max-h-[90vh] overflow-auto flex flex-col items-center border border-slate-700 shadow-2xl cursor-default" onClick={e => e.stopPropagation()}>
-              <button onClick={() => setIsFullscreen(false)} className="absolute top-4 right-4 bg-slate-800 hover:bg-red-500 text-slate-300 hover:text-white rounded-full p-2 transition-colors z-50 shadow-md">
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-              </button>
-              <div dangerouslySetInnerHTML={{ __html: svgContent }} className="w-full flex justify-center items-center [&>svg]:!w-full [&>svg]:!h-auto [&>svg]:!max-w-none [&>svg]:!max-h-none [&>svg]:!min-w-[600px] md:[&>svg]:!min-w-[1000px]" />
-            </div>
-          </motion.div>,
-          document.body
-        )}
-      </AnimatePresence>
+      {createPortal(
+        <AnimatePresence>
+          {isFullscreen && (
+            <motion.div
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/90 backdrop-blur-md p-4 sm:p-8 cursor-zoom-out"
+              onClick={() => setIsFullscreen(false)}
+            >
+              <div className="relative bg-slate-900 rounded-3xl p-6 sm:p-10 w-full h-full max-w-7xl max-h-[90vh] overflow-auto flex flex-col items-center border border-slate-700 shadow-2xl cursor-default" onClick={e => e.stopPropagation()}>
+                <button onClick={() => setIsFullscreen(false)} className="absolute top-4 right-4 bg-slate-800 hover:bg-red-500 text-slate-300 hover:text-white rounded-full p-2 transition-colors z-50 shadow-md">
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+                <div dangerouslySetInnerHTML={{ __html: svgContent }} className="w-full flex justify-center items-center [&>svg]:!w-full [&>svg]:!h-auto [&>svg]:!max-w-none [&>svg]:!max-h-none [&>svg]:!min-w-[600px] md:[&>svg]:!min-w-[1000px]" />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
     </>
   );
 };
 
-export default function MessageBubble({ msg, isReady }) {
+const MarkdownTable = ({ children, showToast, ...props }) => {
+  const tableRef = useRef(null);
+
+  const handleCopyTable = () => {
+    if (!tableRef.current) return;
+    const text = Array.from(tableRef.current.rows).map(row => 
+      Array.from(row.cells).map(cell => cell.innerText).join('\t')
+    ).join('\n');
+    navigator.clipboard.writeText(text);
+    if (showToast) showToast("Table copied to clipboard!");
+  };
+
+  const handleExportExcel = async () => {
+    if (!tableRef.current) return;
+    try {
+      const XLSX = await import("xlsx");
+      const wb = XLSX.utils.table_to_book(tableRef.current, { sheet: "Data" });
+      XLSX.writeFile(wb, "Exported_Table.xlsx");
+      if (showToast) showToast("Excel file downloaded!");
+    } catch (e) {
+      console.error(e);
+      if (showToast) showToast("Failed to export Excel. Please install 'xlsx' package.");
+    }
+  };
+
+  return (
+    <div className="relative group overflow-x-auto my-4 bg-slate-900/30 rounded-xl border border-slate-700/50 p-1">
+      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 flex gap-2 z-10 transition-opacity">
+        <button onClick={handleCopyTable} className="bg-slate-800 text-slate-300 hover:text-white p-1.5 rounded-lg border border-slate-700 shadow-sm" title="Copy Table"><CopyIcon className="w-4 h-4" /></button>
+        <button onClick={handleExportExcel} className="bg-slate-800 text-slate-300 hover:text-white p-1.5 rounded-lg border border-slate-700 shadow-sm" title="Export to Excel"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg></button>
+      </div>
+      <table ref={tableRef} className="min-w-full text-left border-collapse" {...props}>{children}</table>
+    </div>
+  );
+};
+
+export default function MessageBubble({ msg, isReady, theme, showToast, onRegenerate }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
   const isUser = msg.type === "user";
@@ -122,7 +203,7 @@ export default function MessageBubble({ msg, isReady }) {
         </div>
 
         {/* Bubble */}
-        <div className={`flex flex-col gap-3 min-w-0 ${isUser ? "items-end" : "items-start"}`}>
+        <div className={`flex flex-col gap-3 min-w-0 group ${isUser ? "items-end" : "items-start"}`}>
           <div className={`px-5 py-4 shadow-sm text-sm md:text-base leading-relaxed ${
             isUser 
               ? "bg-blue-600 text-white rounded-3xl rounded-tr-sm" 
@@ -138,7 +219,7 @@ export default function MessageBubble({ msg, isReady }) {
             {isUser ? (
               <div className="whitespace-pre-wrap">{msg.text}</div>
             ) : (
-              <div className="prose prose-invert max-w-none prose-p:leading-relaxed prose-pre:bg-slate-900/80 prose-pre:border prose-pre:border-slate-700/50 prose-pre:shadow-inner prose-headings:text-blue-400 prose-a:text-blue-400">
+              <div className="prose prose-invert max-w-none prose-p:leading-relaxed prose-pre:bg-slate-900/80 prose-pre:border prose-pre:border-slate-700/50 prose-pre:shadow-inner prose-headings:text-blue-400 prose-a:text-blue-400 whitespace-pre-wrap leading-7">
                 {msg.detected_format && (
                   <div className="flex items-center gap-1.5 mb-3 text-[10px] font-bold uppercase tracking-wider text-blue-400/90 select-none">
                     <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
@@ -149,7 +230,7 @@ export default function MessageBubble({ msg, isReady }) {
                   <ReactMarkdown 
                     remarkPlugins={[remarkGfm]}
                     components={{
-                      table: (props) => { const cleanProps = { ...props }; delete cleanProps.node; return <div className="overflow-x-auto my-4"><table className="min-w-full text-left border-collapse border border-slate-700/50 shadow-sm rounded-lg" {...cleanProps} /></div>; },
+                      table: (props) => { const cleanProps = { ...props }; delete cleanProps.node; return <MarkdownTable showToast={showToast} {...cleanProps} />; },
                       thead: (props) => { const cleanProps = { ...props }; delete cleanProps.node; return <thead className="bg-slate-800/80 text-slate-200 border-b border-slate-700/50" {...cleanProps} />; },
                       tbody: (props) => { const cleanProps = { ...props }; delete cleanProps.node; return <tbody className="divide-y divide-slate-700/50 bg-slate-900/30" {...cleanProps} />; },
                       tr: (props) => { const cleanProps = { ...props }; delete cleanProps.node; return <tr className="hover:bg-slate-800/30 transition-colors" {...cleanProps} />; },
@@ -165,7 +246,7 @@ export default function MessageBubble({ msg, isReady }) {
                           let chartText = Array.isArray(children) ? children.join('') : String(children || '');
                           // Fix common AI hallucinations and decode HTML entities
                           chartText = chartText.replace(/\|>/g, '|').replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&'); 
-                          return <Mermaid chart={chartText.replace(/\n$/, '')} isStreaming={msg.isStreaming} />;
+                        return <Mermaid chart={chartText.replace(/\n$/, '')} isStreaming={msg.isStreaming} theme={theme} showToast={showToast} />;
                         }
 
                         return isInline 
@@ -179,7 +260,9 @@ export default function MessageBubble({ msg, isReady }) {
                 ) : msg.isStopped ? (
                   <span className="italic opacity-60 text-sm">Response generation was stopped by user.</span>
                 ) : (
-                  <span className="animate-pulse">Thinking...</span>
+                  <span className="animate-pulse flex items-center gap-2">
+                    <svg className="w-4 h-4 animate-spin text-blue-400" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Analyzing and Generating...
+                  </span>
                 )}
               </div>
             )}
@@ -222,6 +305,23 @@ export default function MessageBubble({ msg, isReady }) {
                   </motion.div>
                 )}
               </AnimatePresence>
+            </div>
+          )}
+
+          {/* Copy Toolbar for AI */}
+          {!isUser && !msg.isStreaming && (
+            <div className="flex items-center gap-2 mt-1 justify-start ml-2 opacity-0 group-hover:opacity-100 transition-opacity">
+              <button 
+                onClick={handleCopy} 
+                className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 transition-colors"
+                title="Copy response text"
+              >
+                {copied ? (
+                  <><svg className="w-3.5 h-3.5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg> <span className="text-green-400 font-medium">Copied!</span></>
+                ) : (
+                  <><svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg> Copy Response</>
+                )}
+              </button>
             </div>
           )}
 

@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Form, UploadFile, File, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from typing import Optional
 from pydantic import BaseModel
 from PIL import Image
 import pytesseract
@@ -26,8 +27,18 @@ try:
 except:
     DL_AVAILABLE = False
 
+import time
 # Create DB Tables
-Base.metadata.create_all(bind=engine)
+max_retries = 3
+for attempt in range(max_retries):
+    try:
+        Base.metadata.create_all(bind=engine)
+        print("✅ DB connected")
+        break
+    except Exception as e:
+        print(f"⚠️ DB connection failed (attempt {attempt + 1}/{max_retries}):", e)
+        if attempt < max_retries - 1:
+            time.sleep(3)  # Wait 3 seconds for Neon to wake up before retrying
 
 app = FastAPI()
 
@@ -172,11 +183,12 @@ def delete_message(chat_id: int, msg_id: int, current_user: User = Depends(get_c
         db.commit()
     return {"message": "deleted"}
 
-# ================= TEXT MESSAGE =================
+# ================= TEXT AND FILE UPLOAD =================
 @app.post("/chat/{chat_id}")
 async def add_message(
     chat_id: int, 
-    task: str = Form(...), 
+    task: str = Form(""), 
+    file: Optional[UploadFile] = File(None),
     ai_length: str = Form("Auto"),
     ai_format: str = Form("Auto"),
     ai_tone: str = Form("Auto"),
@@ -186,10 +198,92 @@ async def add_message(
 ):
     chat = db.query(Chat).filter(Chat.id == chat_id, Chat.user_id == current_user.id).first()
     if not chat:
-        return {"error": "Chat not found"}
+        raise HTTPException(status_code=404, detail="Chat not found")
 
-    # Save user message
-    user_msg = Message(chat_id=chat.id, type="user", text=task)
+    extracted_text = ""
+    img_data_url = None
+
+    if file and file.filename:
+        filename = file.filename.lower()
+        contents = await file.read()
+        if not contents:
+            raise HTTPException(status_code=400, detail="Empty file uploaded")
+
+        if filename.endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif")):
+            image = Image.open(io.BytesIO(contents))
+            extracted_text = pytesseract.image_to_string(image)
+            try:
+                preview_img = image.copy()
+                preview_img.thumbnail((500, 500))
+                if preview_img.mode in ("RGBA", "P"):
+                    preview_img = preview_img.convert("RGB")
+                buffered = io.BytesIO()
+                preview_img.save(buffered, format="JPEG")
+                import base64
+                base64_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+                img_data_url = f"data:image/jpeg;base64,{base64_str}"
+            except Exception:
+                img_data_url = None
+        elif filename.endswith(".pdf"):
+            try:
+                import PyPDF2
+                pdf_reader = PyPDF2.PdfReader(io.BytesIO(contents))
+                for page in pdf_reader.pages:
+                    text = page.extract_text()
+                    if text: extracted_text += text + "\n"
+            except ImportError:
+                raise HTTPException(status_code=500, detail="PyPDF2 is not installed. Run `pip install PyPDF2`")
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"PDF Extraction Error: {e}")
+        elif filename.endswith(".docx"):
+            try:
+                import docx
+                doc = docx.Document(io.BytesIO(contents))
+                extracted_text = "\n".join([para.text for para in doc.paragraphs])
+            except ImportError:
+                raise HTTPException(status_code=500, detail="python-docx is not installed. Run `pip install python-docx`")
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"DOCX Extraction Error: {e}")
+        elif filename.endswith(".pptx"):
+            try:
+                from pptx import Presentation
+                prs = Presentation(io.BytesIO(contents))
+                for slide in prs.slides:
+                    for shape in slide.shapes:
+                        if hasattr(shape, "text"):
+                            extracted_text += shape.text + "\n"
+            except ImportError:
+                raise HTTPException(status_code=500, detail="python-pptx is not installed. Run `pip install python-pptx`")
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"PPTX Extraction Error: {e}")
+        elif filename.endswith((".txt", ".csv", ".json", ".md")):
+            extracted_text = contents.decode("utf-8", errors="ignore")
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {file.filename}")
+
+        if not extracted_text.strip():
+            extracted_text = f"[Uploaded file: {file.filename}, but no text was found.]"
+        
+        # Groq free tier limit is 6000 tokens/min. 8000 chars is ~2000 tokens.
+        if len(extracted_text) > 8000:
+            extracted_text = extracted_text[:8000] + "\n\n[Content truncated due to size limits...]"
+
+    final_prompt = task.strip()
+    if file and file.filename:
+        if final_prompt:
+            final_prompt = f"User Prompt: {final_prompt}\n\n--- ATTACHED FILE CONTENT ({file.filename}) ---\n{extracted_text}\n--- END OF FILE CONTENT ---"
+        else:
+            final_prompt = f"Analyze and summarize this attached file ({file.filename}):\n\n--- FILE CONTENT ---\n{extracted_text}\n--- END OF FILE CONTENT ---"
+
+    if not final_prompt:
+        raise HTTPException(status_code=400, detail="No prompt or file provided")
+
+    display_text = task.strip()
+    if file and file.filename:
+        file_badge = f"[File Uploaded: {file.filename} 📎]"
+        display_text = f"{file_badge}\n{display_text}".strip()
+
+    user_msg = Message(chat_id=chat.id, type="user", text=display_text, image_url=img_data_url)
     db.add(user_msg)
     db.commit()
 
@@ -198,7 +292,7 @@ async def add_message(
     context = build_smart_context(messages_dict)
 
     async def stream_response():
-        ai_msg = await asyncio.to_thread(generate_ai_response, task, context, messages_dict, ai_length, ai_format, ai_tone, ai_language)
+        ai_msg = await asyncio.to_thread(generate_ai_response, final_prompt, context, messages_dict, ai_length, ai_format, ai_tone, ai_language)
         text = str(ai_msg.get("response", ""))
         tokens = re.split(r'(\s+)', text)
         for token in tokens:
@@ -224,119 +318,15 @@ async def add_message(
 
     return StreamingResponse(stream_response(), media_type="application/x-ndjson")
 
-# ================= FILE UPLOAD =================
-@app.post("/upload/{chat_id}")
-async def upload_file(
-    chat_id: int, 
-    file: UploadFile = File(...),
-    ai_length: str = Form("Auto"),
-    ai_format: str = Form("Auto"),
-    ai_tone: str = Form("Auto"),
-    ai_language: str = Form("Auto"),
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    contents = await file.read()
-    filename = file.filename.lower()
-    extracted_text = ""
-    img_data_url = None
-
-    if filename.endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif")):
-        image = Image.open(io.BytesIO(contents))
-        extracted_text = pytesseract.image_to_string(image)
-
-        # 🖼️ Generate a lightweight thumbnail for persistent chat preview
-        try:
-            preview_img = image.copy()
-            preview_img.thumbnail((500, 500))
-            if preview_img.mode in ("RGBA", "P"):
-                preview_img = preview_img.convert("RGB")
-            
-            buffered = io.BytesIO()
-            preview_img.save(buffered, format="JPEG")
-            
-            import base64
-            base64_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
-            img_data_url = f"data:image/jpeg;base64,{base64_str}"
-        except Exception as e:
-            img_data_url = None
-            
-    elif filename.endswith(".pdf"):
-        try:
-            import PyPDF2
-            pdf_reader = PyPDF2.PdfReader(io.BytesIO(contents))
-            for page in pdf_reader.pages:
-                text = page.extract_text()
-                if text: extracted_text += text + "\n"
-        except ImportError:
-            extracted_text = "[Error: PyPDF2 is not installed. Run `pip install PyPDF2`]"
-        except Exception as e:
-            extracted_text = f"[PDF Extraction Error: {e}]"
-            
-    elif filename.endswith(".pptx"):
-        try:
-            from pptx import Presentation
-            prs = Presentation(io.BytesIO(contents))
-            for slide in prs.slides:
-                for shape in slide.shapes:
-                    if hasattr(shape, "text"):
-                        extracted_text += shape.text + "\n"
-        except ImportError:
-            extracted_text = "[Error: python-pptx is not installed. Run `pip install python-pptx`]"
-        except Exception as e:
-            extracted_text = f"[PPTX Extraction Error: {e}]"
-            
-    else:
-        try:
-            extracted_text = contents.decode("utf-8")
-        except:
-            extracted_text = f"[Uploaded file: {file.filename}, but content could not be read as text.]"
-            
-    if not extracted_text.strip():
-        extracted_text = f"[Uploaded file: {file.filename}, but no text was found.]"
-
-    chat = db.query(Chat).filter(Chat.id == chat_id, Chat.user_id == current_user.id).first()
-    if not chat:
-        return {"error": "Chat not found"}
-
-    # Save User Upload Message
-    user_msg = Message(chat_id=chat.id, type="user", text=f"[File Uploaded: {file.filename} 📎]", image_url=img_data_url)
-    db.add(user_msg)
-    db.commit()
-
-    messages_dict = [{"type": m.type, "text": m.text, "response": m.response, "plan": json.loads(m.plan) if m.plan else []} for m in chat.messages]
-    context = build_smart_context(messages_dict)
-
-    async def stream_upload_response():
-        ai_msg = await asyncio.to_thread(generate_ai_response, extracted_text, context, messages_dict, ai_length, ai_format, ai_tone, ai_language)
-        text = str(ai_msg.get("response", ""))
-        tokens = re.split(r'(\s+)', text)
-        for token in tokens:
-            if token:
-                yield json.dumps({"type": "chunk", "text": token}) + "\n"
-                await asyncio.sleep(0.02)
-        
-        ai_msg_db = Message(chat_id=chat.id, type="ai", response=ai_msg.get("response"), plan=json.dumps(ai_msg.get("plan", [])), research=json.dumps(ai_msg.get("full_research", [])))
-        db_session = SessionLocal()
-        try:
-            db_session.add(ai_msg_db)
-            db_session.commit()
-            db_session.refresh(ai_msg_db)
-            ai_msg["id"] = ai_msg_db.id
-        finally:
-            db_session.close()
-        
-        yield json.dumps({"type": "done", "full": ai_msg}) + "\n"
-
-    return StreamingResponse(stream_upload_response(), media_type="application/x-ndjson")
-
 ##build_context(task)
 def build_smart_context(messages, limit=6):
     context = []
 
     for msg in messages[-limit:]:
         if msg["type"] == "user":
-            context.append(f"User: {msg['text']}")
+            # Truncate user messages in context to save tokens
+            short_user = msg['text'][:300] + "..." if len(msg['text']) > 300 else msg['text']
+            context.append(f"User: {short_user}")
         elif msg["type"] == "ai":
             short = msg.get("response", "")[:120]
             context.append(f"AI: {short}")
@@ -376,11 +366,14 @@ def generate_ai_response(task: str, context="", messages=[], ai_length="Auto", a
 
     # 🔥 SMART TYPE DETECTION
     query_type = detect_query_type(task, context)
+    
+    # Truncate for classifiers to avoid memory blowout with large files
+    short_task = task[:1000]
 
     # =============================
     # 1. PLAN
     # =============================
-    planning_prompt = f"Break down this task into 3-5 concise search queries or sub-topics for research: {task}"
+    planning_prompt = f"Break down this task into 3-5 concise search queries or sub-topics for research: {short_task}"
     steps = plan_task(planning_prompt)
 
     if isinstance(steps, list):
@@ -393,18 +386,18 @@ def generate_ai_response(task: str, context="", messages=[], ai_length="Auto", a
     # =============================
     # 2. ML + DL
     # =============================
-    ml_result = analyze_task(task)
+    ml_result = analyze_task(short_task)
 
     if DL_AVAILABLE:
-        dl_result = deep_analyze(task)
+        dl_result = deep_analyze(short_task)
     else:
         dl_result = {"dl_category": "N/A", "dl_confidence": "0%"}
 
     # =============================
     # 3. MEMORY
     # =============================
-    store_memory(task, metadata={"type": "task"})
-    memory = search_memory(task)
+    store_memory(short_task, metadata={"type": "task"})
+    memory = search_memory(short_task)
 
     # =============================
     # 4. RESEARCH (SMART FILTER)
@@ -425,8 +418,8 @@ def generate_ai_response(task: str, context="", messages=[], ai_length="Auto", a
             "research": research_step(step)
         })
 
-    research_results = research_results[:4]
-    research_text = "\n".join([f"- {r['step']}: {r['research']}" for r in research_results])
+    research_results = research_results[:3]
+    research_text = "\n".join([f"- {r['step']}: {r['research'][:1000]}" for r in research_results])
 
     # =============================
     # 5. STRICT PROMPT BUILDER & AI SYNTHESIS
@@ -472,19 +465,26 @@ Mode Rules:
 - Auto → decide based on query complexity
 
 Formatting Rules:
-- Bullet Points → use • or -
-- Step-by-step → numbered steps (1, 2, 3)
-- Table → markdown table
+- Bullet Points → EACH point MUST be on a NEW LINE starting with a • symbol. Do NOT add empty lines between bullet points.
+- Step-by-step → EACH step MUST be on a NEW LINE with a clear number (1., 2., etc). Do NOT add empty lines between steps.
+- Table → Return a proper, complete markdown table. Do NOT break the columns.
 - Flowchart → Generate a valid Mermaid.js code block (```mermaid ... ```). Nodes MUST use simple alphanumeric IDs without spaces.
 - Paragraph → readable paragraphs with spacing
 
 CRITICAL:
 - If user selected a format (not Auto) → DO NOT change it.
 - If format is Auto → choose the best format intelligently.
-- Response must be clean, readable, and structured.
+- Response must be clean, readable, and structured. Avoid excessive line spacing or blank lines.
 - Answer directly using the Knowledge Base. Remove robotic filler text.
    - NEVER generate repeated headings or duplicated paragraphs.
    - NEVER repeat the exact same sentence twice.
+DO NOT:
+- Do NOT merge separate bullet points onto a single line.
+- Do NOT write everything in one giant paragraph.
+- Do NOT ignore the requested User Format.
+
+User Format: {ai_format}
+
 
 Knowledge Base:
 {research_text}

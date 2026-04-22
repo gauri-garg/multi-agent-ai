@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import axios from "axios";
 import Sidebar from "./Sidebar";
 import AgentCityInput from "./AgentCityInput";
@@ -47,6 +47,12 @@ export default function App() {
     setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 3000);
   };
 
+  const handleLogout = useCallback(() => {
+    localStorage.removeItem("agentCityToken");
+    localStorage.removeItem("agentCityUser");
+    setToken(null); setUser(null); setChats([]); setActiveChat(null); setIsSettingsModalOpen(false);
+  }, []);
+
   useEffect(() => {
     const root = window.document.documentElement;
     if (theme === "dark") root.classList.add("dark");
@@ -62,7 +68,7 @@ export default function App() {
         if (p.rememberPrefs) {
           setAiLength(p.aiLength || "Auto"); setAiFormat(p.aiFormat || "Auto"); setAiTone(p.aiTone || "Auto"); setAiLanguage(p.aiLanguage || "Auto"); setRememberPrefs(true);
         }
-      } catch (err) {}
+      } catch { /* ignore */ }
     }
   }, []);
 
@@ -76,7 +82,7 @@ export default function App() {
       axios.defaults.headers.common["Authorization"] = `Bearer ${token}`;
       axios.get("http://127.0.0.1:8000/chats").then(res => { setChats(res.data || []); if (res.data.length > 0) setActiveChat(res.data[0].id); }).catch(err => { console.error(err); if (err.response?.status === 401) { handleLogout(); } }).finally(() => setIsReady(true));
     }
-  }, [user, token]);
+  }, [user, token, handleLogout]);
 
   const currentChat = useMemo(() => chats.find(c => c.id === activeChat), [chats, activeChat]);
 
@@ -98,57 +104,10 @@ export default function App() {
     } catch (e) { console.error(e); }
   };
 
-  const uploadFile = async (file, targetChatId = activeChat) => {
-    if (!file || !targetChatId) return;
-    abortControllerRef.current = new AbortController();
-    const signal = abortControllerRef.current.signal;
-    const formData = new FormData();
-    formData.append("file", file); formData.append("ai_length", aiLength); formData.append("ai_format", aiFormat); formData.append("ai_tone", aiTone); formData.append("ai_language", aiLanguage);
-    const previewUrl = file.type.startsWith("image/") ? URL.createObjectURL(file) : null;
-    const userMsg = { id: Date.now() + Math.random(), type: "user", text: `[File Uploaded: ${file.name} 📎]`, imageUrl: previewUrl, isNew: true };
-    const aiMsgId = Date.now() + Math.random();
-    setChats(prev => prev.map(chat => chat.id === targetChatId ? { ...chat, messages: [...(chat.messages || []), userMsg] } : chat));
-    try {
-      const res = await fetch(`http://127.0.0.1:8000/upload/${targetChatId}`, { method: "POST", body: formData, headers: { "Authorization": `Bearer ${token}` }, signal });
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let aiMsgData = { id: aiMsgId, type: "ai", response: "", isStreaming: true, isStopped: false, isCompleted: false, plan: [], research: [], full_research: [], isNew: true };
-      setChats(prev => prev.map(chat => chat.id === targetChatId ? { ...chat, messages: [...chat.messages, aiMsgData] } : chat));
-
-      let buffer = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop();
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const data = JSON.parse(line);
-            if (data.type === "chunk") { aiMsgData.response += data.text; setChats(prev => prev.map(chat => chat.id === targetChatId ? { ...chat, messages: chat.messages.map(m => m.id === aiMsgId ? { ...m, response: aiMsgData.response } : m) } : chat)); }
-            else if (data.type === "done") { setChats(prev => prev.map(chat => chat.id === targetChatId ? { ...chat, messages: chat.messages.map(m => m.id === aiMsgId ? { ...m, ...data.full, isStreaming: false, isCompleted: true } : m) } : chat)); }
-          } catch (e) { }
-        }
-      }
-    } catch (err) { 
-      if (err.name === "AbortError") {
-        console.log("Upload stopped by user");
-        setChats(prev => prev.map(chat => chat.id === targetChatId ? { ...chat, messages: chat.messages.map(m => m.id === aiMsgId ? { ...m, isStreaming: false, isStopped: true, isCompleted: false } : m) } : chat));
-      } else {
-        console.error(err); 
-      }
-    } finally {
-      setLoading(false);
-      setIsStopping(false);
-    }
-  };
-
 const sendTask = async (forcedInput = null) => {
-  const currentInput = forcedInput || input;
-  if (!currentInput && !file) return;
-  if (!forcedInput) setInput(""); 
+  const currentInput = forcedInput !== null ? forcedInput : input;
+  if (!currentInput.trim() && !file) return;
+  if (forcedInput === null) setInput(""); 
   setLoading(true);
   abortControllerRef.current = new AbortController();
   const signal = abortControllerRef.current.signal;
@@ -169,26 +128,38 @@ const sendTask = async (forcedInput = null) => {
   const aiMsgId = Date.now() + Math.random();
 
   try {
-     if (file && !currentInput.trim()) {
-      if (isFirstMsg) renameChat(targetChatId, `Upload: ${file.name}`);
-      await uploadFile(file, targetChatId);
-      setFile(null); setFilePreview(null); setLoading(false);
-      return;
-     }
+      let displayInput = currentInput.trim();
+      const previewUrl = file && file.type.startsWith("image/") ? URL.createObjectURL(file) : null;
+      if (file) {
+        displayInput = `[File Uploaded: ${file.name} 📎]\n${displayInput}`.trim();
+      }
 
-    if (currentInput.trim()) {
-        if (isFirstMsg) {
-          const newName = currentInput.trim().slice(0, 25) + (currentInput.trim().length > 25 ? '...' : '');
-          renameChat(targetChatId, newName);
-        }
+      if (isFirstMsg) {
+        const titleSource = currentInput.trim() || (file ? `Upload: ${file.name}` : "New Chat");
+        const newName = titleSource.slice(0, 25) + (titleSource.length > 25 ? '...' : '');
+        renameChat(targetChatId, newName);
+      }
+
       const userMsg = {
-        id: Date.now() + Math.random(), type: "user", text: currentInput, isNew: true
+        id: Date.now() + Math.random(), type: "user", text: displayInput, imageUrl: previewUrl, isNew: true
       };
       setChats(prev => prev.map(chat => chat.id === targetChatId ? { ...chat, messages: [...(chat.messages || []), userMsg] } : chat));
 
       const formData = new FormData();
-      formData.append("task", currentInput); formData.append("ai_length", aiLength); formData.append("ai_format", aiFormat); formData.append("ai_tone", aiTone); formData.append("ai_language", aiLanguage);
+      formData.append("task", currentInput.trim()); 
+      if (file) formData.append("file", file, file.name);
+      formData.append("ai_length", aiLength); formData.append("ai_format", aiFormat); formData.append("ai_tone", aiTone); formData.append("ai_language", aiLanguage);
+      
+      setFile(null); setFilePreview(null);
+
       const res = await fetch(`http://127.0.0.1:8000/chat/${targetChatId}`, { method: "POST", body: formData, headers: { "Authorization": `Bearer ${token}` }, signal });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        showToast(errData.detail || errData.error || "Failed to process request");
+        setLoading(false);
+        return;
+      }
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -209,16 +180,16 @@ const sendTask = async (forcedInput = null) => {
             const data = JSON.parse(line);
             if (data.type === "chunk") { aiMsgData.response += data.text; setChats(prev => prev.map(chat => chat.id === targetChatId ? { ...chat, messages: chat.messages.map(m => m.id === aiMsgId ? { ...m, response: aiMsgData.response } : m) } : chat)); }
             else if (data.type === "done") { setChats(prev => prev.map(chat => chat.id === targetChatId ? { ...chat, messages: chat.messages.map(m => m.id === aiMsgId ? { ...m, ...data.full, isStreaming: false, isCompleted: true } : m) } : chat)); }
-          } catch (e) { }
+          } catch { /* ignore partial chunks */ }
         }
       }
-    }
   } catch (err) { 
     if (err.name === "AbortError") {
       console.log("Generation stopped by user");
       setChats(prev => prev.map(chat => chat.id === targetChatId ? { ...chat, messages: chat.messages.map(m => m.id === aiMsgId ? { ...m, isStreaming: false, isStopped: true, isCompleted: false } : m) } : chat));
     } else {
       console.error(err); 
+      showToast("Network error or connection lost");
     }
   } finally {
     setLoading(false);
@@ -241,12 +212,6 @@ const sendTask = async (forcedInput = null) => {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
-  };
-
-  const handleLogout = () => {
-    localStorage.removeItem("agentCityToken");
-    localStorage.removeItem("agentCityUser");
-    setToken(null); setUser(null); setChats([]); setActiveChat(null); setIsSettingsModalOpen(false);
   };
 
   const handleDeleteAccount = async () => {

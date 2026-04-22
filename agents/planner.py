@@ -9,6 +9,7 @@ def plan_task(task):
     - Each step should be actionable
     - Include tools, technologies, and strategy
     - Be detailed like a professional roadmap
+    - Do NOT use excessive line spacing or empty lines between steps.
 
     Task: {task}
     """

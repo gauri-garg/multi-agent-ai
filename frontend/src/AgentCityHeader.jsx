@@ -1,6 +1,6 @@
 import React from 'react';
 
-export default function AgentCityHeader({ toggleSidebar, theme, toggleTheme, onShare, currentChat, isSidebarCollapsed }) {
+export default function AgentCityHeader({ toggleSidebar, theme, toggleTheme, onShare, currentChat }) {
     return (
         <div className={`flex items-center justify-between p-4 border-b transition-colors duration-300 ${theme === 'dark' ? 'border-slate-800 bg-slate-900/80 text-white' : 'border-gray-200 bg-white/80 text-gray-900'} backdrop-blur-md sticky top-0 z-10`}>
             <div className="flex items-center gap-3">

@@ -11,7 +11,16 @@ SQLALCHEMY_DATABASE_URL = os.environ.get("NEON_DATABASE_URL")
 if not SQLALCHEMY_DATABASE_URL:
     raise ValueError("NEON_DATABASE_URL environment variable is not set. Please check your .env file.")
 
-engine = create_engine(SQLALCHEMY_DATABASE_URL)
+# SQLAlchemy 1.4+ requires postgresql:// instead of postgres://
+if SQLALCHEMY_DATABASE_URL.startswith("postgres://"):
+    SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    pool_pre_ping=True,  # Verifies connection is alive before using (handles Neon Scale-to-Zero)
+    pool_recycle=300,    # Recycle idle connections before they drop
+    connect_args={"sslmode": "require"} if "neon.tech" in SQLALCHEMY_DATABASE_URL else {}
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
